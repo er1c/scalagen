@@ -13,18 +13,18 @@ Scalagen has also been tested on our own projects such as Querydsl, RDFBean, Cod
 
 Scalagen provides direct Maven support via a plugin. You can use it directly via the command line like this
 
-    mvn com.mysema.scalagen:scalagen-maven-plugin:0.2.2:main -DtargetFolder=target/scala
+    mvn com.mysema.scalagen:scalagen-maven-plugin:0.3.2:main -DtargetFolder=target/scala
     
 and for test sources
 
-    mvn com.mysema.scalagen:scalagen-maven-plugin:0.2.2:test -DtargetFolder=target/scala
+    mvn com.mysema.scalagen:scalagen-maven-plugin:0.3.2:test -DtargetFolder=target/scala
 
 Here is the snippet for an explicit configuration in a POM:
 
     <plugin>
       <groupId>com.mysema.scalagen</groupId>
       <artifactId>scalagen-maven-plugin</artifactId>
-      <version>0.2.2</version>
+      <version>0.3.2</version>
     </plugin>
     
 To convert main sources run
@@ -45,4 +45,3 @@ After cloning this repo, you can build a local version of this tool using SBT:
 sbt compile
 ```
 After this, the `scalagen/scalagen` shell script should pick up the compiled code and can be used to transform code from the command line. 
-
