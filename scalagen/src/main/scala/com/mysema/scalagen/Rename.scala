@@ -22,8 +22,8 @@ class RenameTransformer(replacements: Map[String, String]) extends UnitTransform
   }
   
   override def visit(n: Name, arg: CompilationUnit): Node = {
-    if (replacements.contains(n.getName)) {
-      new Name(replacements(n.getName))
+    if (replacements.contains(n.getNameAsString)) {
+      new Name(replacements(n.getNameAsString))
     } else {
       n
     }
