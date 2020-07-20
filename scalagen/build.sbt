@@ -3,7 +3,7 @@ lazy val commonsLangVersion = "3.0.1"
 lazy val querydslVersion = "2.3.0"
 
 libraryDependencies ++= Seq(
-  "com.github.javaparser" % "javaparser-core" % "3.5.8",
+  "com.github.javaparser" % "javaparser-core" % "3.16.1",
   "net.sourceforge.collections" % "collections-generic" % commonsCollectionsVersion,
   "org.apache.commons" % "commons-lang3" % commonsLangVersion,
   "org.apache.commons" % "commons-io" % "1.3.2",
@@ -14,7 +14,7 @@ libraryDependencies ++= Seq(
 
   "com.novocode" % "junit-interface" % "0.11" % Test,
 
-  "junit" % "junit" % "4.8.1" % Test exclude("javax.servlet", "servlet-api"),
+  "junit" % "junit" % "4.13" % Test exclude("javax.servlet", "servlet-api"),
   "com.mysema.querydsl" % "querydsl-core" % querydslVersion % Test,
   "com.mysema.commons" % "mysema-commons-lang" % "0.2.4" % Test,
   "com.google.code.findbugs" % "jsr305" % "3.0.1" % Test,

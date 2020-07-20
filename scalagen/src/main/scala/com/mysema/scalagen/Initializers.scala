@@ -15,6 +15,10 @@ package com.mysema.scalagen
 
 import java.util.ArrayList
 import UnitTransformer._
+import com.github.javaparser.ast._
+import com.github.javaparser.ast.body._
+import com.github.javaparser.ast.expr.FieldAccessExpr
+import com.github.javaparser.ast.expr._
 
 object Initializers extends Initializers
 
@@ -27,20 +31,20 @@ class Initializers extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
   
-  override def visit(ci: ClassOrInterfaceDecl, cu: CompilationUnit): Node = {
-    val t = super.visit(ci, cu).asInstanceOf[ClassOrInterfaceDecl]
+  override def visit(ci: ClassOrInterfaceDeclaration, cu: CompilationUnit): Node = {
+    val t = super.visit(ci, cu).asInstanceOf[ClassOrInterfaceDeclaration]
     if (t.getMembers == null) {
       return t
     }
     
-    val initializers = t.getMembers.collect { case i: Initializer => i }
+    val initializers = t.getMembers.collect { case i: InitializerDeclaration => i }
     if (!initializers.isEmpty) {
-      val fields = t.getMembers.collect { case f: Field => f }
+      val fields = t.getMembers.collect { case f: FieldDeclaration => f }
       val variables = fields.flatMap(_.getVariables).map(v => (v.getName, v)).toMap
       
       for (i <- initializers) {
         i.getBody.setStatements(i.getBody.getStatements.filter(_ match {
-          case Stmt((t: Name) set v) if variables.contains(t.getName) => {
+          case Types.Expression((t: NameExpr) set v) if variables.contains(t.getName) => {
             variables(t.getName).setInitializer(v)
             false
           }

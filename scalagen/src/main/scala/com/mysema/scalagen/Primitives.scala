@@ -13,9 +13,9 @@
  */
 package com.mysema.scalagen
 
-import java.util.ArrayList
 import UnitTransformer._
 import com.github.javaparser.ast.expr._
+import com.github.javaparser.ast._
 
 object Primitives extends Primitives
 
@@ -24,9 +24,9 @@ object Primitives extends Primitives
  */
 class Primitives extends UnitTransformerBase {
 
-  private val TRUE = new BooleanLiteral(true)
+  private val TRUE = new BooleanLiteralExpr(true)
 
-  private val FALSE = new BooleanLiteral(false)
+  private val FALSE = new BooleanLiteralExpr(false)
 
   private val primitives = Set("Boolean","Byte","Char","Double","Float","Integer","Long","Short")
 
@@ -34,7 +34,7 @@ class Primitives extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit]
   }
 
-  override def visit(n: FieldAccess, arg: CompilationUnit): Node = n match {
+  override def visit(n: FieldAccessExpr, arg: CompilationUnit): Node = n match {
     case FieldAccess(str("Boolean"), "TRUE") => TRUE
     case FieldAccess(str("Boolean"), "FALSE") => FALSE
     case _ => super.visit(n, arg)

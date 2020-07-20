@@ -13,9 +13,13 @@
  */
 package com.mysema.scalagen
 
-import com.github.javaparser.ast.visitor.ModifierVisitorAdapter
 import UnitTransformer._
-import java.util.ArrayList
+import com.github.javaparser.ast.expr._
+import com.github.javaparser.ast.stmt._
+import com.github.javaparser.ast.`type`.Type
+import com.github.javaparser.ast._
+import java.beans.MethodDescriptor
+import com.github.javaparser.ast.body.MethodDeclaration
 
 object SimpleEquals extends SimpleEquals
 
@@ -24,38 +28,38 @@ object SimpleEquals extends SimpleEquals
  */
 class SimpleEquals extends UnitTransformerBase {
   
-  private val returnFalse: Statement = new Return(new BooleanLiteral(false))
+  private val returnFalse: Statement = new ReturnStmt(new BooleanLiteralExpr(false))
   
-  private val replacer = new ModifierVisitor[(Name,Name)]() {    
+  private val replacer = new ModifierVisitor[(NameExpr,NameExpr)]() {    
     
-    override def visit(n: Block, arg: (Name,Name)) = { 
+    override def visit(n: BlockStmt, arg: (NameExpr,NameExpr)) = { 
       val visited = super.visit(n, arg)
       val matched = n match {
-        case Block(Stmt(VariableDeclaration(_, Variable(newName, init) :: Nil)) :: Nil) if init == arg._1 => newName
+        case Block(Types.Expression(VariableDeclaration(_, Variable(newName, init) :: Nil)) :: Nil) if init == arg._1 => newName
         case _ => null
       }
       if (matched != null) {
         //n.getStmts.remove(0)
-        n.setStmts(n.getStmts.drop(1))
-        super.visit(n, (new Name(matched),arg._2))
+        n.setStatements(n.getStatements.drop(1))
+        super.visit(n, (new NameExpr(matched),arg._2))
       } else {
         super.visit(n, arg)
       }
     }
     
-    override def visit(n: Enclosed, arg: (Name,Name)) = {
+    override def visit(n: EnclosedExpr, arg: (NameExpr,NameExpr)) = {
       super.visit(n, arg) match  {
-       case Enclosed(n: Name) => n
+       case Enclosed(n: NameExpr) => n
        case o => o
       }
     }
     
-    override def visit(n: Name, arg: (Name,Name)) = {
+    override def visit(n: NameExpr, arg: (NameExpr,NameExpr)) = {
       if (n == arg._1) arg._2 else n
     }
     
-    override def visit(n: Cast, arg: (Name,Name)) = {
-      if (n.getExpr == arg._1) arg._2 else super.visit(n,arg) 
+    override def visit(n: CastExpr, arg: (NameExpr,NameExpr)) = {
+      if (n.getExpression == arg._1) arg._2 else super.visit(n,arg) 
     }
   }
   
@@ -63,7 +67,7 @@ class SimpleEquals extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
     
-  override def visit(n: Method, arg: CompilationUnit) = {
+  override def visit(n: MethodDeclaration, arg: CompilationUnit) = {
     // transform
     //   if (obj == this) { true }
     //   else if (obj.isInstanceOf[Type]) { obj.asInstanceOf[Type].flag == flag }
@@ -74,17 +78,20 @@ class SimpleEquals extends UnitTransformerBase {
     //     case _ => false
     //   }
     n match {
-      case Method("equals", Type.Boolean, Parameter(name) :: Nil, stmt) => {
+      case Method("equals", JavaType.Boolean, Parameter(name) :: Nil, Some(stmt)) => {
         val converted = stmt match {
           // skip obj == this check
-          case If(_ === This(_) | This(_) === _, Return(Literal(true)), 
-               If(InstanceOf(_,t), action, Return(Literal(false)))) => createSwitch(name,t, action)
-          case If(InstanceOf(_,t), action, Return(Literal(false)))  => createSwitch(name,t, action)
-          case Return(InstanceOf(_,t) and cond) => createSwitch(name, t, new Return(cond))
+          case If(
+              _ === This(_) | This(_) === _, 
+              Return(Literal(true)), 
+              Some(If(InstanceOf(_,t), action, Some(Return(Literal(false)))))
+            ) => createSwitch(name,t, action)
+          case If(InstanceOf(_,t), action, Some(Return(Literal(false))))  => createSwitch(name,t, action)
+          case Return(InstanceOf(_,t) and cond) => createSwitch(name, t, new ReturnStmt(cond))
           case _ => null
         }
         if (converted != null) {
-          n.setBody(new Block(converted :: Nil)) 
+          n.setBody(new BlockStmt(converted :: Nil)) 
         }
         n
       }
@@ -97,11 +104,11 @@ class SimpleEquals extends UnitTransformerBase {
     //    case obj: JoinFlag => obj.flag == flag
     //    case _ => false
     //  }    
-    val selector = new Name(name)
+    val selector = new NameExpr(name)
     val simplified = action.accept(replacer, (selector,selector)).asInstanceOf[Statement]    
-    val matches = new SwitchEntry(VariableDeclaration(-1,name,t), simplified :: Nil)
-    val doesnt  = new SwitchEntry(null, returnFalse :: Nil)       
-    new Switch(selector, matches :: doesnt :: Nil)
+    val matches = new SwitchEntry(NodeList.nodeList(VariableDeclaration(emptyModifiers,name,t)), null, simplified :: Nil)
+    val doesnt  = new SwitchEntry(NodeList.nodeList(), null, returnFalse :: Nil)       
+    new SwitchStmt(selector, matches :: doesnt :: Nil)
   }
   
     

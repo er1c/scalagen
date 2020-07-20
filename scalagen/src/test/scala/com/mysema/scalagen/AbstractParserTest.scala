@@ -18,22 +18,23 @@ import com.github.javaparser.ParseException
 import com.github.javaparser.ast.{CompilationUnit, ImportDeclaration}
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileNotFoundException
-import java.util.ArrayList
-import scala.collection.JavaConversions._
 import scala.reflect.ClassTag
 import TestDirectoryStructure._
+import com.github.javaparser.ast.NodeList
 
 abstract class AbstractParserTest {
   
   def getCompilationUnit(cl: Class[_]): CompilationUnit = {
     var file = new File(s"$SCALA_TEST_DIR_NAME/${cl.getName.replace('.', '/')}.java")
     var in = new FileInputStream(file)
-    val unit = JavaParser.parse(in)
-    if (unit.getImports == null) {
-      unit.setImports(new ArrayList[ImportDeclaration])
+    val parseRes = new JavaParser().parse(in)
+
+    parseRes.getResult.asScala match  {
+      case Some(unit) => 
+        if (unit.getImports == null) unit.setImports(NodeList.nodeList[ImportDeclaration]())
+        unit
+      case None    => throw new ParseException(s"Failed parsing: ${parseRes.getProblems()}")
     }
-    unit
   }
   
   def toScala(obj: AnyRef): String = toScala(getCompilationUnit(obj.getClass))

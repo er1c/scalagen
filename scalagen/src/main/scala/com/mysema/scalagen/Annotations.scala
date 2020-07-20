@@ -14,10 +14,19 @@
 package com.mysema.scalagen
 
 import com.github.javaparser.ast.{ImportDeclaration, NodeList}
-import com.github.javaparser.ast.expr.NameExpr
 import UnitTransformer._
 import com.github.javaparser.ast.`type`.ClassOrInterfaceType
 import com.github.javaparser.ast.expr.{Name, SimpleName}
+import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast.body.AnnotationDeclaration
+import com.github.javaparser.ast.body.BodyDeclaration
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
+import com.github.javaparser.ast.body.ConstructorDeclaration
+import com.github.javaparser.ast.body.AnnotationMemberDeclaration
+import com.github.javaparser.ast.body.Parameter
+import com.github.javaparser.ast.stmt.BlockStmt
+import com.github.javaparser.metamodel.ParameterMetaModel
+import com.github.javaparser.metamodel.PropertyMetaModel
 
 /**
  * Annotations turns Annotation type declarations into normal classes which extend
@@ -25,37 +34,42 @@ import com.github.javaparser.ast.expr.{Name, SimpleName}
  */
 class Annotations(targetVersion: ScalaVersion) extends UnitTransformerBase {
   
-  private val staticAnnotationType = new ClassOrInterface("StaticAnnotation")
+  private val staticAnnotationType = new ClassOrInterfaceType("StaticAnnotation")
   
   def transform(cu: CompilationUnit): CompilationUnit = {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
     
-  override def visit(n: AnnotationDecl, arg: CompilationUnit) = {
+  override def visit(n: AnnotationDeclaration, arg: CompilationUnit) = {
     // turns annotations into StaticAnnotation subclasses
-    arg.getImports().add(new ImportDeclaration(new NameExpr("scala.annotation.StaticAnnotation"), false, false))
-    val clazz = new ClassOrInterfaceDecl()
+    arg.getImports().add(new ImportDeclaration(new Name("scala.annotation.StaticAnnotation"), false, false))
+    val clazz = new ClassOrInterfaceDeclaration()
     clazz.setName(n.getName)
-	  val et = new NodeList[ClassOrInterfaceType]
-	  et.add(staticAnnotationType)
+      val et = new NodeList[ClassOrInterfaceType]
+     et.add(staticAnnotationType)
     clazz.setExtendedTypes(et)
     clazz.setMembers(createMembers(n))
     clazz
   }
   
-  private def createMembers(n: AnnotationDecl): NodeList[BodyDecl] = {
+  private def createMembers(n: AnnotationDeclaration): NodeList[BodyDeclaration[_]] = {
+    import com.github.javaparser.ast.Modifier
+
     // TODO : default values
     val params = n.getMembers
-      .collect { case m: AnnotationMember => m }
-      .map(m => new Parameter(PROPERTY, m.getType, new VariableDeclaratorId(m.getName)))
+      .collect { case m: AnnotationMemberDeclaration => m }
+      .map{ m => 
+        new Parameter(m.getType, m.getName.clone)
+          .addModifier(ScalaModifier.PROPERTY)
+      }
       
     if (params.nonEmpty) {
-      val constructor = new Constructor()
+      val constructor = new ConstructorDeclaration()
       constructor.setParameters(params)
-      constructor.setBody(new Block())
-      constructor :: Nil
+      constructor.setBody(new BlockStmt())
+      NodeList.nodeList(constructor)
     } else {
-      new NodeList[BodyDecl]
+      new NodeList[BodyDeclaration[_]]
     }
   }
     

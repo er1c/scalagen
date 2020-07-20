@@ -13,8 +13,24 @@
  */
 package com.mysema.scalagen
 
-import java.util.ArrayList
 import UnitTransformer._
+import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
+import com.github.javaparser.ast.body.BodyDeclaration
+import com.github.javaparser.ast.body.ConstructorDeclaration
+import com.github.javaparser.ast.stmt.ExplicitConstructorInvocationStmt
+import com.github.javaparser.ast.body.InitializerDeclaration
+import com.github.javaparser.ast.body.TypeDeclaration
+import com.github.javaparser.ast.body.FieldDeclaration
+import com.github.javaparser.ast.stmt.ExpressionStmt
+import com.github.javaparser.ast.expr.AssignExpr
+import com.github.javaparser.ast.expr.FieldAccessExpr
+import com.github.javaparser.ast.expr.NameExpr
+import com.github.javaparser.ast.body.VariableDeclarator
+import com.github.javaparser.ast.stmt.Statement
+import com.github.javaparser.ast.expr.ThisExpr
+import com.github.javaparser.ast.body.Parameter
+import com.github.javaparser.ast.NodeList
 
 object Constructors extends Constructors
 
@@ -27,13 +43,13 @@ class Constructors extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit]
   }
 
-  override def visit(n: ClassOrInterfaceDecl, cu: CompilationUnit):  ClassOrInterfaceDecl = {
-    val t = super.visit(n, cu).asInstanceOf[ClassOrInterfaceDecl]
+  override def visit(n: ClassOrInterfaceDeclaration, cu: CompilationUnit):  ClassOrInterfaceDeclaration = {
+    val t = super.visit(n, cu).asInstanceOf[ClassOrInterfaceDeclaration]
     // make members list mutable
-    t.setMembers(new ArrayList[BodyDecl](t.getMembers))
+    t.setMembers(new NodeList[BodyDeclaration[_]](t.getMembers))
 
     // get all constructors
-    val constr = t.getMembers.collect { case c: Constructor => c }
+    val constr = t.getMembers.collect { case c: ConstructorDeclaration => c }
 
     if (constr.isEmpty) {
       return t
@@ -41,12 +57,12 @@ class Constructors extends UnitTransformerBase {
 
     // get first without delegating
     val first = constr.find( c =>
-      c.getBlock.isEmpty || !isThisConstructor(c.getBlock()(0)))
+      c.getBody.isEmpty || !isThisConstructor(c.getBody()(0)))
 
     // move in front of others
     first.filter(_ != constr(0)).foreach { c =>
       t.getMembers.remove(c)
-      if (!t.hasComment && c.hasComment) t.setComment(c.getComment)
+      t.getComment.asScala.foreach { comment => t.setComment(comment) }
       // TODO: should we merge the constructor comment with the class comment?
       c.setComment(null)
       t.getMembers.add(t.getMembers.indexOf(constr(0)), c)
@@ -59,39 +75,39 @@ class Constructors extends UnitTransformerBase {
     // constructor invocations
     constr.filter(_ != c).foreach { c =>
       if (c.getBody.isEmpty) {// || !c.getBlock()(0).isInstanceOf[ConstructorInvocation]) {
-        c.getBody.add(new ConstructorInvocation(true, null, null))
+        c.getBody.add(new ExplicitConstructorInvocationStmt(true, null, null))
       }
     }
 
     if (!c.getBody.isEmpty &&
-        !c.getBody.getStatements.filter(!_.isInstanceOf[ConstructorInvocation]).isEmpty) {
+        !c.getBody.getStatements.filter(!_.isInstanceOf[ExplicitConstructorInvocationStmt]).isEmpty) {
 
       processStatements(cu, t, c)
 
       if (!c.getBody.isEmpty &&
-          !(c.getBody.size == 1 && c.getBody()(0).isInstanceOf[ConstructorInvocation] &&
-          !c.getBody()(0).asInstanceOf[ConstructorInvocation].isThis)) {
-        val initializer = new Initializer(false, c.getBody)
+          !(c.getBody.size == 1 && c.getBody()(0).isInstanceOf[ExplicitConstructorInvocationStmt] &&
+          !c.getBody()(0).asInstanceOf[ExplicitConstructorInvocationStmt].isThis)) {
+        val initializer = new InitializerDeclaration(false, c.getBody)
         t.getMembers.add(t.getMembers.indexOf(c), initializer)
       }
 
     }
 
     // add missing delegations
-    t.getMembers.collect { case c: Constructor => c }.filter(_ != c)
+    t.getMembers.collect { case c: ConstructorDeclaration => c }.filter(_ != c)
       .foreach { c =>
-        if (!c.getBody.isEmpty && !c.getBody()(0).isInstanceOf[ConstructorInvocation]) {
+        if (!c.getBody.isEmpty && !c.getBody()(0).isInstanceOf[ExplicitConstructorInvocationStmt]) {
           //c.getBlock.getStmts.add(0, new ConstructorInvocation(true, null, null))
-          c.getBody.setStmts(new ConstructorInvocation(true, null, null) :: c.getBody.getStmts)
+          c.getBody.setStatements(new ExplicitConstructorInvocationStmt(true, null, null) :: c.getBody.getStatements)
         }
       }
     t
   }
 
-  private def processStatements(cu: CompilationUnit, t: TypeDecl, c: Constructor) {
-    val fields = t.getMembers.collect { case f: Field => f }
-    val variables = fields.flatMap(_.getVariables).map(v => (v.getName, v)).toMap
-    val variableToField = fields.flatMap(f => f.getVariables.map(v => (v.getName,f)) ).toMap
+  private def processStatements(cu: CompilationUnit, t: TypeDeclaration[_], c: ConstructorDeclaration) {
+    val fields = t.getMembers.collect { case f: FieldDeclaration => f }
+    val variables = fields.flatMap(_.getVariables).map(v => (v.getNameAsString, v)).toMap
+    val variableToField = fields.flatMap(f => f.getVariables.map(v => (v.getNameAsString,f)) ).toMap
 
     var replacements = Map[String, String]()
     
@@ -99,26 +115,26 @@ class Constructors extends UnitTransformerBase {
     c.getBody.getStatements.collect { case s: ExpressionStmt => s }
       .filter(isAssignment(_))
       .foreach { s =>
-      val assign = s.getExpression.asInstanceOf[Assign]
-      if (assign.getTarget.isInstanceOf[FieldAccess]) {
-        val fieldAccess = assign.getTarget.asInstanceOf[FieldAccess]
+      val assign = s.getExpression.asInstanceOf[AssignExpr]
+      if (assign.getTarget.isInstanceOf[FieldAccessExpr]) {
+        val fieldAccess = assign.getTarget.asInstanceOf[FieldAccessExpr]
         processFieldAssign(s, assign, fieldAccess, c, variables, variableToField)
-      } else if (assign.getTarget.isInstanceOf[Name]) {
-        val namedTarget = assign.getTarget.asInstanceOf[Name]
-        if (variables.contains(namedTarget.getName)) {
-          if (assign.getValue.isInstanceOf[Name]) { // field = parameter
-            val namedValue = assign.getValue.asInstanceOf[Name]
+      } else if (assign.getTarget.isInstanceOf[NameExpr]) {
+        val namedTarget = assign.getTarget.asInstanceOf[NameExpr]
+        if (variables.contains(namedTarget.getNameAsString)) {
+          if (assign.getValue.isInstanceOf[NameExpr]) { // field = parameter
+            val namedValue = assign.getValue.asInstanceOf[NameExpr]
             c.getParameters.find(_.getName == namedValue.getName).foreach { param =>
-              val field = variableToField(namedTarget.getName)
+              val field = variableToField(namedTarget.getNameAsString)
               // rename parameter to field name
               param.setName(namedTarget.getName)
-              replacements = replacements.+((param.getName, namedTarget.getName))
+              replacements = replacements.+((param.getNameAsString, namedTarget.getNameAsString))
               copyAnnotationsAndModifiers(field, param)
               // remove field
-              field.setVariables(field.getVariables.filterNot(_ == variables(namedTarget.getName)))
+              field.setVariables(field.getVariables.filterNot(_ == variables(namedTarget.getNameAsString)))
             }
           } else { // field = ?!?
-            variables(namedTarget.getName).setInitializer(assign.getValue)
+            variables(namedTarget.getNameAsString).setInitializer(assign.getValue)
           }
           c.getBody.remove(s)
         }
@@ -140,33 +156,32 @@ class Constructors extends UnitTransformerBase {
 
   }
 
-  private def processFieldAssign(s: ExpressionStmt, assign: Assign, fieldAccess: FieldAccess,
-      c: Constructor, variables: Map[String, Variable], variableToField: Map[String, Field] ) {
-    if (fieldAccess.getScope.isInstanceOf[This] &&
-        variables.contains(fieldAccess.getName.asString()) {
+  private def processFieldAssign(s: ExpressionStmt, assign: AssignExpr, fieldAccess: FieldAccessExpr,
+      c: ConstructorDeclaration, variables: Map[String, VariableDeclarator], variableToField: Map[String, FieldDeclaration] ) = {
+    if (fieldAccess.getScope.isInstanceOf[ThisExpr] &&
+        variables.contains(fieldAccess.getName.asString())) {
       if (fieldAccess.getName.asString == assign.getValue.toString) {
-        val field = variableToField(fieldAccess.getName)
+        val field = variableToField(fieldAccess.getNameAsString)
         c.getParameters.find(_.getName == fieldAccess.getName)
           .foreach(copyAnnotationsAndModifiers(field,_))
         // remove field, as constructor parameter can be used
         //field.getVariables.remove(variables(fieldAccess.getField))
-        field.setVariables(field.getVariables.filterNot(_ == variables(fieldAccess.getField)))
+        field.setVariables(field.getVariables.filterNot(_ == variables(fieldAccess.getNameAsString)))
 
       } else {
         // remove statement, put init to field
-        variables(fieldAccess.getName).setInitializer(assign.getValue)
+        variables(fieldAccess.getNameAsString).setInitializer(assign.getValue)
       }
       c.getBody.remove(s)
     }
   }
 
-  private def copyAnnotationsAndModifiers(f: Field, p: Parameter) {
+  private def copyAnnotationsAndModifiers(f: FieldDeclaration, p: Parameter) = {
     if (f.getAnnotations != null) {
       p.setAnnotations(p.getAnnotations.union(f.getAnnotations))
     }
 
-    val modifiers = f.getModifiers.addModifier(PROPERTY)
-    p.setModifiers(modifiers)
+    p.addModifier(ScalaModifier.PROPERTY)
   }
 
 }

@@ -14,9 +14,6 @@
 package com.mysema.scalagen
 
 import org.junit.Assert.assertEquals
-import com.github.javaparser.ParseException
-import com.github.javaparser.ast.CompilationUnit
-import java.io.FileNotFoundException
 import org.junit.Test
 import com.mysema.examples._
 

@@ -19,15 +19,18 @@ import com.github.javaparser.ast.comments._
 import com.github.javaparser.ast.expr._
 import com.github.javaparser.ast.stmt._
 import com.github.javaparser.ast.`type`._
+import com.github.javaparser.ast.modules._
 import com.github.javaparser.ast.visitor.{GenericVisitor, GenericVisitorAdapter}
 import java.util.List
 
-import com.github.javaparser.ast.nodeTypes.NodeWithModifiers
+import com.github.javaparser.ast.nodeTypes._
 import com.mysema.scalagen.Types.MaybeInBlock
-
 import scala.collection.JavaConverters._
 import org.apache.commons.lang3.StringUtils
 import com.mysema.scalagen.ast.BeginClosureExpr
+import java.{util => ju}
+
+
 object ScalaStringVisitor {
   private val PARAMETRIZED = Set("Class","Comparable","Enum","Iterable")
 
@@ -82,10 +85,12 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     node.accept(v, arg)
   }
 
-  private def methodModifiersString(m: Int): String = {
-    modifiersString(ModifierSet.removeModifier(m, ModifierSet.ABSTRACT))
+  private def methodModifiersString(m: NodeWithModifiers[_]): String = {
+    m.removeModifier(Modifier.Keyword.ABSTRACT)
+    modifiersString(m)
   }
-  private val modifierMatchings: Seq[(RichModifiers => Boolean, String)] = Seq[(RichModifiers => Boolean, String)](
+
+  private val modifierMatchings: Seq[(RichNodeWithModifiers[_] => Boolean, String)] = Seq[(RichNodeWithModifiers[_] => Boolean, String)](
     (_.isTransient, "@transient"),
     (_.isVolatile, "@volatile"),
     (_.isPrivate, "private"),
@@ -97,20 +102,23 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     //(_.isFinal, ""),
     (_.isNative, "/* native */"),
     (_.isStrictfp, "/* strictfp */"),
-    (_.isSynchronized, "/* synchronized */")
+    (_.isSynchronized, "/* synchronized */"),
+    (_.isProperty, "")
   )
+
   private def modifiersString(m: NodeWithModifiers[_]): String = {
-    val modifiers: RichModifiers = new RichModifiers(m)
+    val modifiers = new RichNodeWithModifiers(m)
+    //val modifiers: RichModifiers = new RichModifiers(m)
     val matchingModifiers = modifierMatchings.flatMap { case (predicate, string) => if (predicate(modifiers)) Some(string) else None }
     if (matchingModifiers.isEmpty) "" else matchingModifiers.mkString(" ") + " "
   }
 
-  private def membersString(members: List[BodyDeclaration], arg: Context): String =
+  private def membersString(members: List[BodyDeclaration[_]], arg: Context): String =
     members.map(member => s"\n${member.accept(this, arg)}\n").mkString
 
   private def memberAnnotationsString(annotations: List[AnnotationExpr], arg: Context): String = {
     Option(annotations.asScala).toList.flatten.foldLeft("") { case (str, a) =>
-      str + (if (!SKIPPED_ANNOTATIONS.contains(a.getName.getName)) {
+      str + (if (!SKIPPED_ANNOTATIONS.contains(a.getName)) {
           a.accept(this, arg) + "\n"
         } else {
           ""
@@ -118,21 +126,24 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }
   }
 
-  private def withMemberAnnotations(n: AnnotableNode, arg: Context)(restString: => String): String =
+  private def withMemberAnnotations(n: NodeWithAnnotations[_], arg: Context)(restString: => String): String =
     memberAnnotationsString(n.getAnnotations, arg) + restString
 
-  private def hasOverride(n: AnnotableNode) =
-    Option(n.getAnnotations).toList.flatten.find(_.getName.getName == "Override").isDefined
+  private def hasOverride(n: NodeWithAnnotations[_]) =
+    Option(n.getAnnotations).toList.flatten.find(_.getNameAsString == "Override").isDefined
 
   private def annotationsString(annotations: List[AnnotationExpr], arg: Context): String = {
     val matchingAnnotations = Option(annotations).toList.flatten.filter(
-      a => !SKIPPED_ANNOTATIONS.contains(a.getName.getName)
+      a => !SKIPPED_ANNOTATIONS.contains(a.getName)
     ).map(_.accept(this, arg))
     if (matchingAnnotations.isEmpty) "" else matchingAnnotations.mkString(" ") + " "
   }
 
-  private def withAnnotations(n: AnnotableNode, arg: Context)(restText: => String) =
+  private def withAnnotations(n: NodeWithAnnotations[_], arg: Context)(restText: => String) =
     annotationsString(n.getAnnotations, arg) + restText
+
+  private def typeArgsString(args: ju.Optional[List[Type]], arg: Context): String = 
+    typeArgsString(args.asScala.getOrElse(Nil): List[Type], arg)
 
   private def typeArgsString(args: List[Type], arg: Context): String = {
     if (args != null && !args.isEmpty) {
@@ -159,21 +170,21 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }.mkString("(", ", ", ")").replaceAll("=> , ", "=> ")
   }
 
-  private def javadocString(javadoc: JavadocComment, arg: Context): String =
-    Option(javadoc).map(_.accept(this, arg)).getOrElse("")
+  private def javadocString(javadoc: Option[JavadocComment], arg: Context): String =
+    javadoc.map(_.accept(this, arg)).getOrElse("")
 
-  private def withJavaDoc(n: DocumentableNode, arg: Context)(restText: => String = ""): String = {
-    javadocString(n.getJavaDoc, arg) + restText
+  private def withJavaDoc(n: NodeWithJavadoc[_], arg: Context)(restText: => String = ""): String = {
+    javadocString(n.getJavadocComment.asScala, arg) + restText
   }
 
   private def withComments(n: Node, arg: Context)(restText: => String = ""): String = {
-    val commentBefore = Option(n.getComment).map(_.accept(this, arg))
+    val commentBefore = n.getComment.asScala.map(_.accept(this, arg))
     val commentsAfter = n.getOrphanComments.map(_.accept(this, arg))
     (commentBefore.toSeq ++ Seq(restText) ++ commentsAfter).mkString("\n")
   }
 
-  def visit(n: CompilationUnit, arg: Context): String = withComments(n, arg) {
-    val packageString = Option(n.getPackage).map(_.accept(this, arg)).getOrElse("")
+  override def visit(n: CompilationUnit, arg: Context): String = withComments(n, arg) {
+    val packageString = n.getPackageDeclaration.asScala.map(_.accept(this, arg)).getOrElse("")
     val importsString = (n.getImports.map(_.accept(this, arg)) ++ Seq(
       "//remove if not needed",
       "import scala.collection.JavaConversions._"
@@ -185,13 +196,14 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       ).mkString("\n")
     val argWithFilteredImport = arg.copy(imports = n.getImports
       .filter(i => !i.isAsterisk && !i.isStatic)
-      .map(i => split(i.getName).swap).toMap)
+      .map(i => split(i.getNameAsString).swap).toMap)
 
 
-    val pkgAnnotationObjectString = if (n.getPackage != null && !isEmpty(n.getPackage.getAnnotations)) {
-      memberAnnotationsString(n.getPackage.getAnnotations, arg) +
-      s"package object ${split(n.getPackage.getName)._2} {\n}\n"
-    } else ""
+    val pkgAnnotationObjectString =
+      n.getPackageDeclaration.asScala.filterNot{ pkg => isEmpty(pkg.getAnnotations) }.map { pkg =>
+        memberAnnotationsString(pkg.getAnnotations, arg) +
+        s"package object ${split(pkg.getNameAsString)._2} {\n}\n"
+      }.getOrElse("")
 
     val typesString = Option(n.getTypes).map(_.map(_.accept(this, argWithFilteredImport)).mkString("\n\n")).getOrElse("")
 
@@ -215,18 +227,18 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     Option(n.accept(hasResourcesVisitor, null)).map(_.booleanValue).getOrElse(false)
   }
 
-  private def split(name: NameExpr): (String, String) = {
+  private def split(name: String): (String, String) = {
     val str = name.toString
     val separator = str.lastIndexOf('.')
     (str.substring(0,separator), str.substring(separator+1))
   }
 
-  def visit(n: PackageDeclaration, arg: Context): String =
-    s"package ${if (!isEmpty(n.getAnnotations)) split(n.getName)._1 else n.getName.accept(this, arg)}\n\n"
+  override def visit(n: PackageDeclaration, arg: Context): String =
+    s"package ${if (!isEmpty(n.getAnnotations)) split(n.getNameAsString)._1 else n.getName.accept(this, arg)}\n\n"
 
-  def visit(n: NameExpr, arg: Context): String = visitName(n.getName)
+  override def visit(n: NameExpr, arg: Context): String = visitName(n.getNameAsString)
 
-  def visitName(name: String): String =
+  private def visitName(name: String): String =
     if (RESERVED.contains(name)) {
       "`" + name + "`"
     } else if (PRIMITIVES.contains(name)) {
@@ -235,12 +247,13 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       name
     }
 
-  def visit(n: QualifiedNameExpr, arg: Context): String =
-    s"${n.getQualifier.accept(this, arg)}.${visitName(n.getName)}"
+  override def visit(n: Name, arg: Context): String =
+    n.getQualifier.asScala.map{ _.accept(this, arg) }.map{ _ + "." }.getOrElse("") +
+      visitName(n.getIdentifier)
 
-  def visit(n: ImportDeclaration, arg: Context): String = withComments(n, arg) {
-    val toImport = if (n.getName.getName.endsWith(".Array") && !n.isAsterisk) {
-      val className = n.getName.getName
+  override def visit(n: ImportDeclaration, arg: Context): String = withComments(n, arg) {
+    val toImport = if (n.getNameAsString.endsWith(".Array") && !n.isAsterisk) {
+      val className = n.getNameAsString
       val pkg = className.substring(0, className.lastIndexOf('.'))
       s"$pkg.{Array => _Array}"
     } else {
@@ -250,10 +263,10 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     s"import $toImport\n"
   }
 
-  def visit(n: ClassOrInterfaceDeclaration, arg: Context): String =
+  override def visit(n: ClassOrInterfaceDeclaration, arg: Context): String =
     withJavaDoc(n, arg) {
       withMemberAnnotations(n, arg) {
-        val objectType = if (n.getModifiers.isObject) {
+        val objectType = if (n.isObject) {
           "object"
         } else if (n.isInterface) {
           "trait"
@@ -269,7 +282,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
         }
         val superTypes = Seq(
           Option(n.getExtendedTypes.asScala),
-          Option(n.getImplementedTypes(.asScala)
+          Option(n.getImplementedTypes.asScala)
         ).flatten.flatten.toList
         val constructorString = (for {
           cons <- constructorOption if (!isEmpty(cons.getParameters) || !cons.isPublic)
@@ -282,7 +295,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
           s" extends ${superTypes.head.accept(this, arg)}${superInvocation.map(s => argumentsString(s.getArguments, arg)).getOrElse("")}" +
             ("" :: superTypes.tail.map(_.accept(this, arg))).mkString(" with ")
         } else ""
-        val declaredTypeString = s"${modifiersString(n.getModifiers)}$objectType ${n.getName}${typeParametersString(n.getTypeParameters, arg)}$constructorString"
+        val declaredTypeString = s"${modifiersString(n)}$objectType ${n.getName}${typeParametersString(n.getTypeParameters, arg)}$constructorString"
         val spacingAfterTypeString = if (settings.splitLongLines && declaredTypeString.length > 75) "\n   " else ""
         val bodyString = if (!isEmpty(n.getMembers)) {
           s" {\n${membersString(n.getMembers, arg)}\n}"
@@ -294,22 +307,20 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       }
     }
 
-  private def getFirstConstructor(members: List[BodyDeclaration]): Option[ConstructorDeclaration] = {
-    if (members == null) {
-      return null
-    }
-    members.collectFirst({ case c: ConstructorDeclaration => c })
+  private def getFirstConstructor(members: List[BodyDeclaration[_]]): Option[ConstructorDeclaration] = {
+    if (members == null) None
+    else members.collectFirst{ case c: ConstructorDeclaration => c }
   }
 
-  def visit(n: JavadocComment, arg: Context): String = withComments(n, arg) {
+  override def visit(n: JavadocComment, arg: Context): String = withComments(n, arg) {
     val comment = StringUtils.split(n.getContent.trim, '\n').map(" " + _.trim).mkString("\n")
     s"/**\n$comment\n */"
   }
 
-  def visit(n: ClassOrInterfaceType, arg: Context): String = withComments(n, arg) {
-    val scopeString = if (n.getScope != null) {
-      n.getScope.accept(this, arg) + "."
-    } else if (!arg.classOf && !arg.typeArg && PRIMITIVES.contains(n.getName)) {
+  override def visit(n: ClassOrInterfaceType, arg: Context): String = withComments(n, arg) {
+    val scopeString = if (n.getScope != null && n.getScope.asScala.nonEmpty) {
+      n.getScope.get.accept(this, arg) + "."
+    } else if (!arg.classOf && !arg.typeArg && PRIMITIVES.contains(n.getNameAsString)) {
       // primitive types are favored for class literals and type arguments
       "java.lang."
     } else if (JAVA_TYPES.contains(n.getName)) {
@@ -320,15 +331,16 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     } else if (n.getScope == null && n.getNameAsString == "Array") {
       // TODO : only if Array import is present
       "_Array"
-//    } else if (PRIMITIVES.contains(n.getName) && (arg.classOf || arg.typeArg)) {
-//      printer.print(PRIMITIVES(n.getName))
+    //} else if (PRIMITIVES.contains(n.getNameAsString) && (arg.classOf || arg.typeArg)) {
+    //  PRIMITIVES(n.getNameAsString)
     } else {
-      n.getName
+      n.getNameAsString
     }
-    val typeArgString = if (isEmpty(n.getTypeArguments)) {
+    
+    val typeArgString = if (n.getTypeArguments.asScala.isEmpty || isEmpty(n.getTypeArguments.get)) {
       if (PARAMETRIZED.contains(n.getName)) {
         "[_]"
-      } else if (UTIL_PARAMETRIZED.contains(n.getName) && arg.imports.getOrElse(n.getName, "") == "java.util") {
+      } else if (UTIL_PARAMETRIZED.contains(n.getName) && arg.imports.getOrElse(n.getNameAsString, "") == "java.util") {
         if (n.getName == "Map") "[_,_]" else "[_]"
       } else ""
     } else ""
@@ -336,52 +348,52 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       scopeString,
       scalaTypeString,
       typeArgString,
-      typeArgsString(n.getTypeArguments, arg)
+      typeArgsString(n.getTypeArguments.asScala.getOrElse(Nil): List[Type], arg)
     ).mkString
   }
 
-  def visit(n: TypeParameter, arg: Context): String = withComments(n, arg) {
+  override def visit(n: TypeParameter, arg: Context): String = withComments(n, arg) {
     n.getName + (if (n.getTypeBound != null && n.getTypeBound.size() > 0) {
       " <: " + n.getTypeBound.map(_.accept(this, arg)).mkString(" with ")
     } else "")
   }
 
-  def visit(n: PrimitiveType, arg: Context): String = n.getType.name
+  override def visit(n: PrimitiveType, arg: Context): String = n.getType.toBoxedType.asString()
 
-  def visit(n: ReferenceType, arg: Context): String = withComments(n, arg) {
-    val adaptedArg = if(n.getArrayCount > 0) arg.copy(typeArg = true) else arg
-    val prefix = "Array[" * n.getArrayCount
-    val postFix = "]" * n.getArrayCount
-    s"$prefix${n.getType.accept(this, adaptedArg)}$postFix"
-  }
+  // override def visit(n: ReferenceType, arg: Context): String = withComments(n, arg) {
+  //   val adaptedArg = if(n.getArrayLevel > 0) arg.copy(typeArg = true) else arg
+  //   val prefix = "Array[" * n.getArrayLevel
+  //   val postFix = "]" * n.getArrayLevel
+  //   s"$prefix${n.getElementType.accept(this, adaptedArg)}$postFix"
+  // }
 
-  def visit(n: WildcardType, arg: Context): String = withComments(n, arg) {
-    val maybeExtends = Option(n.getExtendedType).map { ext =>
+  override def visit(n: WildcardType, arg: Context): String = withComments(n, arg) {
+    val maybeExtends = n.getExtendedType.asScala.map { ext =>
       s"<: ${ext.accept(this, arg)}"
     }
-    val maybeSuper = Option(n.getSuperType).map { sup =>
+    val maybeSuper = n.getSuperType.asScala.map { sup =>
       s">: ${sup.accept(this, arg)}"
     }
     Seq(Some("_"), maybeExtends, maybeSuper).flatten.mkString(" ")
   }
 
-  def visit(n: FieldDeclaration, arg: Context): String = {
-    val argWithType = arg.copy(assignType = n.getType)
+  override def visit(n: FieldDeclaration, arg: Context): String = {
+    val argWithType = arg.copy(assignType = n.getElementType)
     withJavaDoc(n, argWithType) {
       withComments(n, arg) {
         val modifier = if (n.isFinal()) "val " else "var "
         val variablesString = n.getVariables.map { v =>
           val typeString = if (true) {
-            (if (v.getName.endsWith("_")) " " else "") +
-              ": " + n.getType.accept(this, argWithType)
+            (if (v.getNameAsString.endsWith("_")) " " else "") +
+              ": " + n.getElementType.accept(this, argWithType)
           } else ""
-          val initializerString = if (v.getInitializer == null) {
-            " = _"
+          val initializerString = if (v.getInitializer.isPresent) {
+            " = " + v.getInitializer.get.accept(this, argWithType)
           } else {
-            " = " + v.getInitializer.accept(this, argWithType)
+            " = _"
           }
           memberAnnotationsString(n.getAnnotations, argWithType) +
-            modifiersString(n.getModifiers) +
+            modifiersString(n) +
             modifier +
             v.getName.accept(this, argWithType) + typeString + initializerString
         }.mkString("\n\n")
@@ -390,46 +402,49 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }
   }
 
-  def visit(n: VariableDeclarator, arg: Context): String = withComments(n, arg) {
-    n.getName.accept(this, arg) + Option(n.getInitializer).map(" = " + _.accept(this, arg)).getOrElse("")
+  override def visit(n: VariableDeclarator, arg: Context): String = withComments(n, arg) {
+    n.getName.accept(this, arg) + n.getInitializer.asScala.map(" = " + _.accept(this, arg)).getOrElse("")
   }
 
-  def visit(n: ArrayInitializerExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: ArrayInitializerExpr, arg: Context): String = withComments(n, arg) {
     val values = Option(n.getValues).toList.flatMap(_.map(_.accept(this, arg))).mkString(", ")
     s"Array($values)"
   }
 
-  def visit(n: VoidType, arg: Context): String = "Unit"
+  override def visit(n: VoidType, arg: Context): String = "Unit"
 
-  def visit(n: ArrayAccessExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: ArrayAccessExpr, arg: Context): String = withComments(n, arg) {
     val name = n.getName.accept(this, arg.copy(arrayAccess = true))
     val index = n.getIndex.accept(this, arg)
     s"$name($index)"
   }
 
-  def visit(n: ArrayCreationExpr, arg: Context): String = withComments(n, arg) {
-    if (n.getDimensions != null && !n.getDimensions.isEmpty) {
-      val withoutArguments = if (arg.assignType != null) {
-        s"new ${arg.assignType.accept(this, arg)}"
-      } else {
-        val max = n.getArrayCount + 1
-        val dimString = (0 until max).map { _ =>
-          n.getType.accept(this, arg.copy(typeArg = true))
-        }.mkString(",")
-        s"Array.ofDim[$dimString]"
+  override def visit(n: ArrayCreationExpr, arg: Context): String = withComments(n, arg) {
+    Option(n.getLevels)
+      .filterNot{ _.isEmpty }
+      .map { nl: NodeList[ArrayCreationLevel] =>
+
+        val withoutArguments = if (arg.assignType != null) {
+          s"new ${arg.assignType.accept(this, arg)}"
+        } else {
+          val dimString = n.getElementType.accept(this, arg.copy(typeArg = true))
+          s"Array.ofDim[$dimString]"
+        }
+
+        withoutArguments + nl.map(_.getDimension.asScala).map {
+          case Some(v) => stringify(v, arg)
+          case None => "0"
+        }.mkString("(", ", ", ")")
       }
-      withoutArguments + n.getDimensions.map(stringify(_, arg)).mkString("(", ", ", ")")
-    } else {
-      n.getInitializer.accept(this, arg)
-    }
+      .getOrElse(n.getInitializer.asScala.map{ _.accept(this, arg) }.getOrElse(""))
   }
 
-  def visit(n: AssignExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: AssignExpr, arg: Context): String = withComments(n, arg) {
     import AssignExpr.{ Operator => Op }
     val symbol = n.getOperator match {
       case Op.ASSIGN => "="
-      case Op.AND => "&="
-      case Op.OR => "|="
+      case Op.BINARY_AND => "&="
+      case Op.BINARY_OR => "|="
       case Op.XOR => "^="
       case Op.PLUS => "+="
       case Op.MINUS => "-="
@@ -443,7 +458,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     s"${n.getTarget.accept(this, arg)} $symbol ${n.getValue.accept(this, arg)}"
   }
 
-  def visit(n: BinaryExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: BinaryExpr, arg: Context): String = withComments(n, arg) {
     import BinaryExpr.{ Operator => Op }
     val symbol = n.getOperator match {
       case Op.OR => "||"
@@ -472,7 +487,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     } else "") + n.getRight.accept(this, arg)
   }
 
-  def visit(n: CastExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: CastExpr, arg: Context): String = withComments(n, arg) {
     n.getExpression.accept(this, arg) + (
     if (n.getType.isInstanceOf[PrimitiveType]) {
       s".to${n.getType.accept(this, arg)}"
@@ -481,13 +496,13 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     })
   }
 
-  def visit(n: ClassExpr, arg: Context): String = s"classOf[${n.getType.accept(this, arg.copy(classOf = true))}]"
+  override def visit(n: ClassExpr, arg: Context): String = s"classOf[${n.getType.accept(this, arg.copy(classOf = true))}]"
 
-  def visit(n: ConditionalExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: ConditionalExpr, arg: Context): String = withComments(n, arg) {
     s"if (${n.getCondition.accept(this, arg)}) ${n.getThenExpr.accept(this, arg.copy(mustWrap = true))} else ${n.getElseExpr.accept(this, arg.copy(mustWrap = true))}"
   }
 
-  def visit(n: EnclosedExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: EnclosedExpr, arg: Context): String = withComments(n, arg) {
     if (n.getInner.isInstanceOf[CastExpr]) {
       n.getInner.accept(this, arg)
     } else {
@@ -495,21 +510,21 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }
   }
 
-  def visit(n: FieldAccessExpr, arg: Context): String = withComments(n, arg) {
-    s"${n.getScope.accept(this, arg)}.${visitName(n.getField)}"
+  override def visit(n: FieldAccessExpr, arg: Context): String = withComments(n, arg) {
+    s"${n.getScope.accept(this, arg)}.${visitName(n.getNameAsString)}"
   }
 
-  def visit(n: InstanceOfExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: InstanceOfExpr, arg: Context): String = withComments(n, arg) {
     s"${n.getExpression.accept(this, arg)}.isInstanceOf[${n.getType.accept(this, arg)}]"
   }
 
-  def visit(n: CharLiteralExpr, arg: Context): String = s"'${n.getValue}'"
+  override def visit(n: CharLiteralExpr, arg: Context): String = s"'${n.getValue}'"
 
-  def visit(n: DoubleLiteralExpr, arg: Context): String = removeUnderscores(n.getValue)
+  override def visit(n: DoubleLiteralExpr, arg: Context): String = removeUnderscores(n.getValue)
 
-  def visit(n: IntegerLiteralExpr, arg: Context): String = numberValue(n.getValue, "Integer.parseInt")
+  override def visit(n: IntegerLiteralExpr, arg: Context): String = numberValue(n.getValue, "Integer.parseInt")
 
-  def visit(n: LongLiteralExpr, arg: Context): String = numberValue(n.getValue, "java.lang.Long.parseLong")
+  override def visit(n: LongLiteralExpr, arg: Context): String = numberValue(n.getValue, "java.lang.Long.parseLong")
 
   private def removeUnderscores(n: String) = n.replaceAllLiterally("_", "")
   
@@ -526,34 +541,34 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }
   }
 
-  def visit(n: StringLiteralExpr, arg: Context): String = s""""${n.getValue}""""
+  override def visit(n: StringLiteralExpr, arg: Context): String = s""""${n.getValue}""""
 
-  def visit(n: BooleanLiteralExpr, arg: Context): String = String.valueOf(n.getValue)
+  override def visit(n: BooleanLiteralExpr, arg: Context): String = String.valueOf(n.getValue)
 
-  def visit(n: NullLiteralExpr, arg: Context): String = "null"
+  override def visit(n: NullLiteralExpr, arg: Context): String = "null"
 
-  def visit(n: ThisExpr, arg: Context): String = withComments(n, arg) {
-    Option(n.getClassExpr).map { classExpr =>
+  override def visit(n: ThisExpr, arg: Context): String = withComments(n, arg) {
+    n.getTypeName.asScala.map { classExpr =>
       s"${classExpr.accept(this, arg)}."
     }.getOrElse("") + "this"
   }
 
-  def visit(n: SuperExpr, arg: Context): String = withComments(n, arg) {
-    Option(n.getClassExpr).map { classExpr =>
+  override def visit(n: SuperExpr, arg: Context): String = withComments(n, arg) {
+    n.getTypeName.asScala.map { classExpr =>
       s"${classExpr.accept(this, arg)}."
     }.getOrElse("") + "super"
   }
 
-  def visit(n: MethodCallExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: MethodCallExpr, arg: Context): String = withComments(n, arg) {
     val args = if (n.getArguments == null) 0 else n.getArguments.size
     val shortForm = SHORT_FORM.contains(n.getName) && args < 2 && !n.getArguments.get(0).isInstanceOf[LiteralExpr] || NO_ARGS_SHORT.contains(n.getName) && args == 0
-    val scopeString = Option(n.getScope).map { scope =>
+    val scopeString = n.getScope.asScala.map { scope =>
       scope.accept(this, arg) + (if ((shortForm && args == 1)) " " else ".")
     }.getOrElse("")
     val methodName = if (METHOD_REPLACEMENTS.contains(n.getNameAsString)) {
       METHOD_REPLACEMENTS(n.getNameAsString)
     } else {
-      visitName(n.getName)
+      visitName(n.getNameAsString)
     }
     val argsString = if (n.getName == "asList" && n.getScope != null && n.getScope.toString == "Arrays" && args == 1) {
       // assume Arrays.asList is called with an array argument
@@ -564,68 +579,70 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       if (args == 1) {
         s" ${n.getArguments.get(0).accept(this, arg)}"
       } else ""
-    } else if (!(n.getName.startsWith("get") || n.getName.startsWith("is")) || args > 0) {
+    } else if (!(n.getNameAsString.startsWith("get") || n.getNameAsString.startsWith("is")) || args > 0) {
       argumentsString(n.getArguments, arg)
     } else ""
     scopeString +
       methodName +
-      typeArgsString(n.getTypeArgs, arg) +
+      typeArgsString(n.getTypeArguments.asScala.map{ _.toList }.getOrElse(Nil), arg) +
       argsString
   }
 
-  def visit(n: ObjectCreationExpr, arg: Context): String = withComments(n, arg) {
-    Option(n.getScope).map(_.accept(this, arg) + ".").getOrElse("") +
+  override def visit(n: ObjectCreationExpr, arg: Context): String = withComments(n, arg) {
+    n.getScope.asScala.map(
+      _.accept(this, arg) + ".").getOrElse("") +
       "new " +
-      typeArgsString(n.getTypeArgs, arg) +
+      typeArgsString(n.getTypeArguments.asScala.map{ _.toList }.getOrElse(Nil), arg) +
       n.getType.accept(this, arg) +
       argumentsString(n.getArguments, arg) +
-      Option(n.getAnonymousClassBody).toList.map { anonClassBody =>
-        s" {${membersString(anonClassBody, arg)}}"
+      n.getAnonymousClassBody.asScala.getOrElse(NodeList.nodeList()).toList.map { anonClassBody =>
+        s" {${membersString(anonClassBody :: Nil, arg)}}"
       }.mkString
   }
 
-  def visit(n: UnaryExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: UnaryExpr, arg: Context): String = withComments(n, arg) {
     import UnaryExpr.{ Operator => Op }
-    if (n.getOperator == Op.not && n.getExpr.isInstanceOf[MethodCallExpr] && n.getExpr.asInstanceOf[MethodCallExpr].getName == "equals") {
-      val method = n.getExpr.asInstanceOf[MethodCallExpr]
-      return new MethodCallExpr(method.getScope, "!=", method.getArguments).accept(this, arg)
+    // Op.not => https://github.com/javaparser/javaparser/blob/master/javaparser-core/src/main/java/com/github/javaparser/ast/expr/UnaryExpr.java#L58
+    if (n.getOperator == Op.LOGICAL_COMPLEMENT && n.getExpression.isInstanceOf[MethodCallExpr] && n.getExpression.asInstanceOf[MethodCallExpr].getName == "equals") {
+      val method = n.getExpression.asInstanceOf[MethodCallExpr]
+      return new MethodCallExpr(method.getScope.asScala.getOrElse(null), "!=", method.getArguments).accept(this, arg)
     }
 
-    val exprString = n.getExpr.accept(this, arg)
+    val exprString = n.getExpression.accept(this, arg)
     n.getOperator match {
-      case Op.posIncrement => s"{$exprString += 1; $exprString - 1}"
-      case Op.posDecrement => s"{$exprString -= 1; $exprString + 1}"
-      case Op.positive => s"+$exprString"
-      case Op.negative => s"-$exprString"
-      case Op.inverse => s"~$exprString"
-      case Op.not => s"!$exprString"
+      case Op.POSTFIX_INCREMENT => s"{$exprString += 1; $exprString - 1}"
+      case Op.POSTFIX_DECREMENT => s"{$exprString -= 1; $exprString + 1}"
+      case Op.PLUS => s"+$exprString"
+      case Op.MINUS => s"-$exprString"
+      case Op.BITWISE_COMPLEMENT => s"~$exprString"
+      case Op.LOGICAL_COMPLEMENT => s"!$exprString"
       case _ => ""
     }
   }
-  def visit(n: ConstructorDeclaration, arg: Context): String = printConstructor(n, arg, false)
+  override def visit(n: ConstructorDeclaration, arg: Context): String = printConstructor(n, arg, false)
 
   private def printConstructor(n: ConstructorDeclaration, arg: Context, first: Boolean): String = withComments(n, arg) {
     val annotationString = memberAnnotationsString(n.getAnnotations, arg)
     val paramsString = Option(n.getParameters.asScala).toList.flatten.map(_.accept(this, arg)).mkString("(", ", ", ")")
     if (!first) {
-      javadocString(n.getJavaDoc, arg) +
+      javadocString(n.getJavadocComment.asScala, arg) +
         annotationString +
         "def this" +
         typeParametersString(n.getTypeParameters, arg) +
-        modifiersString(n.getModifiers) +
+        modifiersString(n) +
         paramsString +
         " = " +
         n.getBody.accept(this, arg)
     } else {
       annotationString +
-        (if (first && (n.getModifiers.isPrivate || n.getModifiers.isProtected)) {
+        (if (first && (n.isPrivate || n.isProtected)) {
           " "
         } else "") +
-        modifiersString(n.getModifiers) +
+        modifiersString(n) +
         paramsString
     }
   }
-  def visit(n: MethodDeclaration, arg: Context): String = {
+  override def visit(n: MethodDeclaration, arg: Context): String = {
     val argWithInCopyEquals = arg.copy(inObjectEquals = n.getName == "equals" && n.getParameters.size == 1)
     withComments(n, argWithInCopyEquals) {
       val annotationSource = memberAnnotationsString(n.getAnnotations, argWithInCopyEquals)
@@ -633,13 +650,13 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
         case _: VoidType => "Unit"
         case t => t.accept(this, argWithInCopyEquals)
       }
-      val bodyString = Option(n.getBody).map(" = " + _.accept(this, argWithInCopyEquals.copy(mustWrap = n.getType.isInstanceOf[VoidType]))).getOrElse("")
+      val bodyString = n.getBody.asScala.map(" = " + _.accept(this, argWithInCopyEquals.copy(mustWrap = n.getType.isInstanceOf[VoidType]))).getOrElse("")
 
       annotationSource +
-        methodModifiersString(n.getModifiers) +
+        methodModifiersString(n) +
         (if (hasOverride(n) || isHashCode(n) || isEquals(n) || isToString(n)) "override " else "") +
         "def " +
-        visitName(n.getName) +
+        visitName(n.getNameAsString) +
         typeParametersString(n.getTypeParameters, argWithInCopyEquals) +
         n.getParameters.asScala.map(_.accept(this, argWithInCopyEquals)).mkString("(", ", ", ")") +
         ": " + typeString +
@@ -647,51 +664,54 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }
   }
 
-  def visit(n: Parameter, arg: Context): String = withAnnotations(n, arg) {
-    val valVarString = if (n.getModifiers.isProperty) {
-      if (n.getModifiers.isFinal) "val " else "var "
+  override def visit(n: Parameter, arg: Context): String = withAnnotations(n, arg) {
+    val valVarString = if (n.isProperty) {
+      if (n.isFinal) "val " else "var "
     } else ""
     val typeDeclarationString = if(n.getType.isInstanceOf[UnknownType])
       ""
     else {
-      val typeString = "Array[" * n.getId.getArrayCount +
+      
+      // if () "Array[" * n.getId.getArrayCount +
+      val typeString = 
         n.getType.accept(this, arg) +
-        "]" * n.getId.getArrayCount +
         (if (n.isVarArgs) "*" else "")
+
+
       if (n.getType.isInstanceOf[UnionType])
         " @ " + typeString
       else
         ": " + typeString
     }
-    modifiersString(n.getModifiers) +
+    modifiersString(n) +
       valVarString +
-      n.getId.accept(this, arg) +
+      n.getName.accept(this, arg) +
       typeDeclarationString
   }
 
-  def visit(n: MultiTypeParameter, arg: Context): String = withAnnotations(n, arg) {
-    val valVarString = if (n.getModifiers.isProperty) {
-      if (n.getModifiers.isFinal) "val " else "var "
-    } else ""
-    modifiersString(n.getModifiers) +
-      valVarString +
-      n.getId.accept(this, arg) +
-      (n.getType.getElements.toList match {
-        case tpe :: Nil =>
-          ": " + tpe.accept(this, arg)
-        case types =>
-          " @ " + types.map("_: " + _.accept(this, arg)).mkString("(", " | ", ")")
-      })
-  }
+  // def visit(n: MultiTypeParameter, arg: Context): String = withAnnotations(n, arg) {
+  //   val valVarString = if (n.getModifiers.isProperty) {
+  //     if (n.getModifiers.isFinal) "val " else "var "
+  //   } else ""
+  //   modifiersString(n.getModifiers) +
+  //     valVarString +
+  //     n.getId.accept(this, arg) +
+  //     (n.getType.getElements.toList match {
+  //       case tpe :: Nil =>
+  //         ": " + tpe.accept(this, arg)
+  //       case types =>
+  //         " @ " + types.map("_: " + _.accept(this, arg)).mkString("(", " | ", ")")
+  //     })
+  // }
 
-  def visit(n: ExplicitConstructorInvocationStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: ExplicitConstructorInvocationStmt, arg: Context): String = withComments(n, arg) {
     if (n.isThis) {
-      typeArgsString(n.getTypeArguments, arg) + "this" + argumentsString(n.getArguments, arg)
+      typeArgsString(n.getTypeArguments.asScala.map{ _.toList }.getOrElse(Nil), arg) + "this" + argumentsString(n.getArguments, arg)
     } else {
       s"""this(???) /* TODO: Scala does not allow multiple super constructor calls
          | * Change this code to call a constructor of the current class instead.
          | * For your convenience, here is the invalid super constructor call:
-         | * ${Option(n.getExpression).map(_.accept(this, arg) + ".").getOrElse("")}${typeArgsString(n.getTypeArguments, arg)}}super${argumentsString(n.getArguments, arg)}
+         | * ${n.getExpression.asScala.map(_.accept(this, arg) + ".").getOrElse("")}${typeArgsString(n.getTypeArguments.asScala.getOrElse(null), arg)}}super${argumentsString(n.getArguments, arg)}
          | */
        """.stripMargin
     }
@@ -699,52 +719,54 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
 
   def isTypeInitMatch(n: VariableDeclarationExpr, v: VariableDeclarator) = {
     import PrimitiveType.Primitive
-    val init = v.getInitializer
-    if (init.isInstanceOf[LiteralExpr]) {
-	    // Type is part of Variable now, not VariableDeclarator
-      n.getType match {
-        case ptype: PrimitiveType =>
-          ptype.getType match {
-            case Primitive.BOOLEAN => init.isInstanceOf[BooleanLiteralExpr]
-            case Primitive.BYTE => false
-            case Primitive.CHAR => init.isInstanceOf[CharLiteralExpr]
-            case Primitive.DOUBLE => init.isInstanceOf[DoubleLiteralExpr]
-            case Primitive.FLOAT => false
-            case Primitive.INT => init.isInstanceOf[IntegerLiteralExpr]
-            case Primitive.LONG => init.isInstanceOf[LongLiteralExpr]
-            case Primitive.SHORT => false
-          }
-        case _ =>
-          true
-      }
-    } else {
-      true
 
+    v.getInitializer.asScala match {
+      case Some(init: LiteralExpr) =>
+        // Type is part of Variable now, not VariableDeclarator
+        n.getElementType match {
+          case ptype: PrimitiveType =>
+            ptype.getType match {
+              case Primitive.BOOLEAN => init.isInstanceOf[BooleanLiteralExpr]
+              case Primitive.BYTE => false
+              case Primitive.CHAR => init.isInstanceOf[CharLiteralExpr]
+              case Primitive.DOUBLE => init.isInstanceOf[DoubleLiteralExpr]
+              case Primitive.FLOAT => false
+              case Primitive.INT => init.isInstanceOf[IntegerLiteralExpr]
+              case Primitive.LONG => init.isInstanceOf[LongLiteralExpr]
+              case Primitive.SHORT => false
+            }
+          case _ =>
+            true
+
+        }
+      case _ => true
     }
   }
 
-  def visit(n: VariableDeclarationExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: VariableDeclarationExpr, arg: Context): String = withComments(n, arg) {
     val asParameter = n.getModifiers == -1
     val valVarString = if (n.isFinal) "val " else "var "
     n.getVariables.map { v =>
-      val typeAndInit = if (v.getInitializer == null || v.getInitializer.isInstanceOf[NullLiteralExpr] || !isTypeInitMatch(n, v)) {
+      val typeAndInit = if (!v.getInitializer.isPresent || v.getInitializer.get.isInstanceOf[NullLiteralExpr] || !isTypeInitMatch(n, v)) {
         val initString = if (!asParameter) {
-          " = " + (n.getType match {
-            case prim: PrimitiveType => Option(v.getInitializer).map(_.accept(this, arg)).getOrElse(DEFAULTS(prim.getType))
+          " = " + (n.getElementType match {
+            case prim: PrimitiveType => v.getInitializer.asScala.map(_.accept(this, arg)).getOrElse(DEFAULTS(prim.getType))
             case _ => null
           })
           //printer.print(if (v.getInit() == null) "_" else "null")
         } else ""
         v.getName.accept(this, arg) + ": " +
-          "Array[" * v.getId.getArrayCount + n.getType.accept(this, arg) + "]" * v.getId.getArrayCount +
+          //"Array[" * v.getId.getArrayCount + n.getElementType.accept(this, arg) + "]" * v.getId.getArrayCount +
+          n.getElementType.accept(this, arg) +
           initString
       } else {
-        v.getInitializer match {
-          case newObj: ObjectCreationExpr if (newObj.getType() != null && (newObj.getType.getTypeArguments() == null || newObj.getType.getTypeArguments.isEmpty)) =>
-            n.getType match {
+        v.getInitializer.asScala match {
+
+          case Some(newObj: ObjectCreationExpr) if (newObj.getType() != null && (newObj.getType.getTypeArguments() == null || !newObj.getType.getTypeArguments.isPresent)) =>
+            n.getElementType match {
               case ref: ReferenceType =>
-                ref.getType match {
-                  case tpe: ClassOrInterfaceType => newObj.getType.setTypeArguments(tpe.getTypeArguments())
+                ref.getElementType match {
+                  case tpe: ClassOrInterfaceType => tpe.getTypeArguments.asScala.foreach{ newObj.getType.setTypeArguments }
                   case _ =>
                 }
               case _ =>
@@ -752,8 +774,9 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
           case _ =>
         }
         v.getName.accept(this, arg) + ": " +
-          "Array[" * v.getId.getArrayCount + n.getType.accept(this, arg) + "]" * v.getId.getArrayCount +
-          Option(v.getInitializer).map(" = " + _.accept(this, arg)).getOrElse("")
+          //"Array[" * v.getId.getArrayCount + n.getElementType.accept(this, arg) + "]" * v.getId.getArrayCount +
+          n.getElementType.accept(this, arg) +
+          v.getInitializer.asScala.map(" = " + _.accept(this, arg)).getOrElse("")
       }
       annotationsString(n.getAnnotations, arg) +
         (if (!asParameter) valVarString else "") +
@@ -761,13 +784,13 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }.mkString("\n")
   }
 
-  def visit(n: AssertStmt, arg: Context): String = withComments(n, arg) {
-    s"assert(${n.getCheck.accept(this, arg)})" + Option(n.getMessage).map { msg =>
+  override def visit(n: AssertStmt, arg: Context): String = withComments(n, arg) {
+    s"assert(${n.getCheck.accept(this, arg)})" + n.getMessage.asScala.map { msg =>
       s" : ${msg.accept(this, arg)}"
     }.getOrElse("")
   }
 
-  def visit(n: BlockStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: BlockStmt, arg: Context): String = withComments(n, arg) {
     if (!isEmpty(n.getStatements) && !arg.mustWrap && n.getStatements.size == 1 && n.getStatements.get(0).isInstanceOf[SwitchStmt]) {
       return n.getStatements.get(0).accept(this, arg)
     } else if (!isEmpty(n.getStatements) && !arg.mustWrap && n.getStatements.size == 1) {
@@ -790,18 +813,18 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }.getOrElse("")
   }
 
-  def visit(n: LabeledStmt, arg: Context): String =
+  override def visit(n: LabeledStmt, arg: Context): String =
     s"${n.getLabel}: ${n.getStatement.accept(this, arg)}"
 
-  def visit(n: EmptyStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: EmptyStmt, arg: Context): String = withComments(n, arg) {
     ""
   }
 
-  def visit(n: ExpressionStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: ExpressionStmt, arg: Context): String = withComments(n, arg) {
     n.getExpression.accept(this, arg)
   }
 
-  def visit(n: SwitchStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: SwitchStmt, arg: Context): String = withComments(n, arg) {
     val argNoSkip = arg.copy(skip = false)
     n.getSelector.accept(this, argNoSkip) + " match {\n" +
       Option(n.getEntries).map { entries =>
@@ -811,11 +834,12 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       "\n}"
   }
 
-  def visit(n: SwitchEntryStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: SwitchEntry, arg: Context): String = withComments(n, arg) {
     val matchExpr = if (arg.skip) {
-      " | " + Option(n.getLabel).map(_.accept(this, arg)).getOrElse("")
+      n.getLabels.map(_.accept(this, arg)).mkString(" | ")
     } else {
-      "case " + Option(n.getLabel).map(_.accept(this, arg)).getOrElse("_")
+      val foo = n.getLabels.map(_.accept(this, arg)) 
+      "case " + (if (foo.isEmpty) "_" else foo.mkString(", ")) // maybe?? .mkString("(", ", ", ")")
     }
     arg.skip = n.getStatements == null || n.getStatements.size() == 0
     val resultExpr =
@@ -831,12 +855,12 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     matchExpr + resultExpr
   }
 
-  def visit(n: BreakStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: BreakStmt, arg: Context): String = withComments(n, arg) {
     "//break"
   }
 
-  def visit(n: ReturnStmt, arg: Context): String = withComments(n, arg) {
-    Option(n.getExpr).map { expr =>
+  override def visit(n: ReturnStmt, arg: Context): String = withComments(n, arg) {
+    n.getExpression.asScala.map { expr =>
       (if (arg.returnOn) {
         "return "
       } else "") +
@@ -844,8 +868,8 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }.getOrElse("return")
   }
 
-  def visit(n: EnumDeclaration, arg: Context): String = withJavaDoc(n, arg) {
-    val implementsString = Option(n.getImplements).map { impl =>
+  override def visit(n: EnumDeclaration, arg: Context): String = withJavaDoc(n, arg) {
+    val implementsString = Option(n.getImplementedTypes).map { impl =>
       " implements " + impl.map(_.accept(this, arg)).mkString(", ")
     }.getOrElse("")
     val entriesString = Option(n.getEntries).map(_.map(_.accept(this, arg)).mkString(", ")).getOrElse("")
@@ -853,7 +877,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       ";" + membersString(members, arg)
     }.getOrElse(Option(n.getEntries).map(_ => "\n").getOrElse(""))
     memberAnnotationsString(n.getAnnotations, arg) +
-      modifiersString(n.getModifiers) +
+      modifiersString(n) +
       "enum " +
       n.getName +
       implementsString +
@@ -863,7 +887,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       "}"
   }
 
-  def visit(n: EnumConstantDeclaration, arg: Context): String = withJavaDoc(n, arg) {
+  override def visit(n: EnumConstantDeclaration, arg: Context): String = withJavaDoc(n, arg) {
     memberAnnotationsString(n.getAnnotations, arg) +
       n.getName +
       Option(n.getArguments).map(args => argumentsString(args, arg)).getOrElse("") +
@@ -872,7 +896,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       }.getOrElse("")
   }
 
-  def visit(n: InitializerDeclaration, arg: Context): String = withComments(n, arg) {
+  override def visit(n: InitializerDeclaration, arg: Context): String = withComments(n, arg) {
     Option(n.getBody.getStatements).map { stmts =>
       stmts.flatMap {
         case _: ExplicitConstructorInvocationStmt => None
@@ -881,27 +905,27 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     }.getOrElse("")
   }
 
-  def visit(n: IfStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: IfStmt, arg: Context): String = withComments(n, arg) {
     s"if (${n.getCondition.accept(this, arg)}) ${n.getThenStmt.accept(this, arg.copy(mustWrap = true))}" +
-      Option(n.getElseStmt).map { elStmt => s" else ${elStmt.accept(this, arg.copy(mustWrap = true))}" }.getOrElse("")
+      n.getElseStmt.asScala.map { elStmt => s" else ${elStmt.accept(this, arg.copy(mustWrap = true))}" }.getOrElse("")
   }
 
-  def visit(n: WhileStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: WhileStmt, arg: Context): String = withComments(n, arg) {
     s"while (${n.getCondition.accept(this, arg)}) ${n.getBody.accept(this, arg)}"
   }
 
-  def visit(n: ContinueStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: ContinueStmt, arg: Context): String = withComments(n, arg) {
     "//continue"
   }
 
-  def visit(n: DoStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: DoStmt, arg: Context): String = withComments(n, arg) {
     s"do ${n.getBody.accept(this, arg)} while (${n.getCondition.accept(this, arg)});"
   }
 
-  def visit(n: ForeachStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: ForEachStmt, arg: Context): String = withComments(n, arg) {
     val forExpressionDescent = Iterator.iterate((n: Statement, "", 0)) { case (bdy, _, idx) =>
       bdy match {
-        case MaybeInBlock(fe: ForeachStmt) =>
+        case MaybeInBlock(fe: ForEachStmt) =>
           (
             fe.getBody,
             s"${if (idx > 0) "; " else ""}${fe.getVariable.getVariables.get(0).accept(this, arg)} <- ${fe.getIterable.accept(this, arg)}",
@@ -927,13 +951,13 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
   }
 
   private def isUnwrapped(stmt: Statement): Boolean = Types.extract(stmt) match {
-    case foreach: ForeachStmt => true
+    case foreach: ForEachStmt => true
     case ifStmt: IfStmt => ifStmt.getElseStmt() == null
     case _ => false
   }
 
-  def visit(n: ForStmt, arg: Context): String = withComments(n, arg) {
-    val loopCondition = Option(n.getCompare).map(_.accept(this, arg)).getOrElse("true")
+  override def visit(n: ForStmt, arg: Context): String = withComments(n, arg) {
+    val loopCondition = n.getCompare.asScala.map(_.accept(this, arg)).getOrElse("true")
     val body = if (n.getUpdate != null && n.getBody.isInstanceOf[BlockStmt]) {
       // merge updates into block
       val block = n.getBody.asInstanceOf[BlockStmt]
@@ -954,27 +978,35 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       body
   }
 
-  def visit(n: ThrowStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: ThrowStmt, arg: Context): String = withComments(n, arg) {
     "throw " + n.getExpression.accept(this, arg)
   }
 
-  def visit(n: SynchronizedStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: SynchronizedStmt, arg: Context): String = withComments(n, arg) {
     Option(n.getExpression).map(expr => s"synchronized (${expr.accept(this, arg.copy(mustWrap = true))}) ")
       .getOrElse("synchronized ") +
       n.getBody.accept(this, arg.copy(mustWrap = true))
   }
 
-  def visit(n: TryStmt, arg: Context): String = withComments(n, arg) {
+  override def visit(n: TryStmt, arg: Context): String = withComments(n, arg) {
     val wrapInTry = !isEmpty(n.getCatchClauses()) || n.getFinallyBlock() != null
 
-    def resourceString(rd: VariableDeclarationExpr): String =
-      rd.getVariables.map(res => s"${res.getName.accept(this, arg)} <- managed(${res.getInitializer.accept(this, arg)})").mkString("\n")
+    // def resourceString(rd: VariableDeclarationExpr): String =
+    //   rd.getVariables.map(res => s"${res.getName.accept(this, arg)} <- managed(${res.getInitializer.asScala.map(_.accept(this, arg)).getOrElse("")})").mkString("\n")
+    // }
 
+
+    def resourceString(rd: Expression): String =
+      rd match {
+        case vd: VariableDeclarationExpr =>
+          vd.getVariables.map(res => s"${res.getName.accept(this, arg)} <- managed(${res.getInitializer.asScala.map(_.accept(this, arg)).getOrElse("")})").mkString("\n")
+        case _ => ???
+      }
 
     val resourcesString = if (!n.getResources.isEmpty) {
       val forString = "for " +
         (if (n.getResources.size == 1) {
-          "(" + resourceString(n.getResources.get(0)) + ")"
+          "(" + resourceString(n.getResources()(0)) + ")"
         } else {
           n.getResources.map(resourceString).mkString("{", "\n", "} ")
         }) +
@@ -991,7 +1023,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
          |   ${catchs.map(_.accept(this, arg)).mkString("\n")}
          |}""".stripMargin
     }.getOrElse("")
-    val finallyString = Option(n.getFinallyBlock).map(" finally " + _.accept(this, arg)).getOrElse("")
+    val finallyString = n.getFinallyBlock.asScala.map(" finally " + _.accept(this, arg)).getOrElse("")
     (if (wrapInTry) {
       "try "
     } else "") +
@@ -1000,7 +1032,7 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
       finallyString
   }
 
-  def visit(n: CatchClause, arg: Context): String = withComments(n, arg) {
+  override def visit(n: CatchClause, arg: Context): String = withComments(n, arg) {
     val catchBlockString = Option(n.getBody.getStatements).map { stmts =>
       if (stmts.size == 1) {
         stmts.get(0).accept(this, arg)
@@ -1012,58 +1044,83 @@ class ScalaStringVisitor(settings: ConversionSettings) extends GenericVisitor[St
     s"case ${n.getParameter.accept(this, arg)} => $catchBlockString\n"
   }
 
-  def visit(n: AnnotationDeclaration, arg: Context): String = withJavaDoc(n, arg) {
+  override def visit(n: AnnotationDeclaration, arg: Context): String = withJavaDoc(n, arg) {
     memberAnnotationsString(n.getAnnotations, arg) +
       modifiersString(n) +
-      "@interface " +
+      "trait " +
       n.getName +
       " {\n" +
       Option(n.getMembers).map(m => membersString(m, arg)).toList.mkString +
       "}"
   }
 
-  def visit(n: AnnotationMemberDeclaration, arg: Context): String = withJavaDoc(n, arg) {
+  override def visit(n: AnnotationMemberDeclaration, arg: Context): String = withJavaDoc(n, arg) {
     memberAnnotationsString(n.getAnnotations, arg) +
-      modifiersString(n.getModifiers) +
-      visitName(n.getName) +
+      modifiersString(n) +
+      visitName(n.getNameAsString) +
       ": " +
       n.getType.accept(this, arg) +
-      Option(n.getDefaultValue).map("= " + _.accept(this, arg)).toList.mkString
+      n.getDefaultValue.asScala.map("= " + _.accept(this, arg)).toList.mkString
   }
 
-  def visit(n: MarkerAnnotationExpr, arg: Context): String = s"@${n.getName.accept(this, arg)}"
+  override def visit(n: MarkerAnnotationExpr, arg: Context): String = s"@${n.getName.accept(this, arg)}"
 
-  def visit(n: SingleMemberAnnotationExpr, arg: Context): String =
+  override def visit(n: SingleMemberAnnotationExpr, arg: Context): String =
     s"@${n.getName.accept(this, arg)}(${n.getMemberValue.accept(this, arg)})"
 
-  def visit(n: NormalAnnotationExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: NormalAnnotationExpr, arg: Context): String = withComments(n, arg) {
     val pairsString = Option(n.getPairs).toList.flatten.map(_.accept(this, arg)).mkString("(", ", ", ")")
     s"@${n.getName.accept(this, arg)}$pairsString"
   }
 
-  def visit(n: MemberValuePair, arg: Context): String = s"${visitName(n.getName)} = ${n.getValue.accept(this, arg)}"
+  override def visit(n: MemberValuePair, arg: Context): String = s"${visitName(n.getNameAsString)} = ${n.getValue.accept(this, arg)}"
 
-  def visit(n: LineComment, arg: Context): String = s"//${n.getContent}"
+  override def visit(n: LineComment, arg: Context): String = s"//${n.getContent}"
 
-  def visit(n: BlockComment, arg: Context): String = s"/*${n.getContent}*/\n"
+  override def visit(n: BlockComment, arg: Context): String = s"/*${n.getContent}*/\n"
 
-  def visit(n: TypeExpr, arg: Context): String = n.getType.accept(this, arg)
+  override def visit(n: TypeExpr, arg: Context): String = n.getType.accept(this, arg)
 
-  def visit(n: MethodReferenceExpr, arg: Context): String = withComments(n, arg) {
-    val typeParams = if (n.getTypeArguments.getTypeArguments.isEmpty()) ""
-                     else n.getTypeArguments.getTypeArguments.map(_.accept(this, arg)).mkString("[", ", ", "]")
+  override def visit(n: MethodReferenceExpr, arg: Context): String = withComments(n, arg) {
+    val typeParams = if (n.getTypeArguments.asScala.isEmpty) ""
+                     else n.getTypeArguments.asScala.map(_.accept(this, arg)).mkString("[", ", ", "]")
     s"${n.getScope.accept(this, arg)}.${visitName(n.getIdentifier)}$typeParams"
   }
 
-  def visit(n: LambdaExpr, arg: Context): String = withComments(n, arg) {
+  override def visit(n: LambdaExpr, arg: Context): String = withComments(n, arg) {
     val params = n.getParameters.map(_.accept(this, arg)).mkString("(", ", ", ")")
     val body = n.getBody.accept(this, arg)
     s"${params} => $body"
   }
 
-  def visit(n: UnknownType, y: Context): String = s"Nothing /* Unknown type $n */"
+  override def visit(n: UnknownType, y: Context): String = s"Nothing /* Unknown type $n */"
 
-  def visit(n: UnionType, y: Context): String = n.getElements.map("_: " + _.accept(this, y)).mkString("(", " | ", ")")
+  override def visit(n: UnionType, y: Context): String = n.getElements.map("_: " + _.accept(this, y)).mkString("(", " | ", ")")
 
-  def visit(n: IntersectionType, y: Context): String = s"Nothing /* Intersection type $n */"
+  override def visit(n: IntersectionType, y: Context): String = s"Nothing /* Intersection type $n */"
+
+  // New in 3.x
+
+  override def visit(n: TextBlockLiteralExpr, arg: Context): String = "\"\"\"" + n.asString + "\"\"\""
+
+  override def visit(n: YieldStmt, arg: Context): String = ???
+  override def visit(n: SwitchExpr, arg: Context): String = ???
+  override def visit(n: Modifier, arg: Context): String = ???
+  override def visit(n: VarType, arg: Context): String = ???
+  override def visit(n: ReceiverParameter, arg: Context): String = ???
+  override def visit(n: UnparsableStmt, arg: Context): String = ???
+  override def visit(n: ModuleOpensDirective, arg: Context): String = ???
+  override def visit(n: ModuleUsesDirective, arg: Context): String = ???
+  override def visit(n: ModuleProvidesDirective, arg: Context): String = ???
+  override def visit(n: ModuleExportsDirective, arg: Context): String = ???
+  override def visit(n: ModuleRequiresDirective, arg: Context): String = ???
+  override def visit(n: ModuleDeclaration, arg: Context): String = ???
+  override def visit(n: SimpleName, arg: Context): String = n.getIdentifier
+  override def visit(n: NodeList[_ <: Node], arg: Context): String = ???
+  override def visit(n: LocalClassDeclarationStmt, arg: Context): String = ???
+  override def visit(n: ArrayCreationLevel, arg: Context): String = ???
+
+  override def visit(n: ArrayType, arg: Context): String = {
+    n.getElementType.accept(this, arg)  
+  }
 }

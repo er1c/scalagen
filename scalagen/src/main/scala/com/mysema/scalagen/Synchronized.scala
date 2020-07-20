@@ -13,9 +13,10 @@
  */
 package com.mysema.scalagen
 
-import com.github.javaparser.ast.CompilationUnit
 import UnitTransformer._
-import com.github.javaparser.ast.body.ModifierSet
+import com.github.javaparser.ast._
+import com.github.javaparser.ast.body._
+import com.github.javaparser.ast.stmt.SynchronizedStmt
 
 object Synchronized extends Synchronized
 
@@ -26,15 +27,18 @@ class Synchronized extends ModifierVisitor[CompilationUnit] with UnitTransformer
   
   def transform(cu: CompilationUnit): CompilationUnit = {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
-  }  
-  
-  override def visit(nn: Method, arg: CompilationUnit) = {
-    val n = super.visit(nn, arg).asInstanceOf[Method]
-    if (n.getModifiers.hasModifier(ModifierSet.SYNCHRONIZED)) {
-      n.removeModifier(ModifierSet.SYNCHRONIZED)
-      n.setBody(new SynchronizedStmt(null, n.getBody()))
+  }
+
+  override def visit(nn: MethodDeclaration, arg: CompilationUnit) = {
+    val n = super.visit(nn, arg).asInstanceOf[MethodDeclaration]
+    if (n.isSynchronized) {
+      n.removeModifier(Modifier.Keyword.SYNCHRONIZED)
+      extractOption(n.getBody.asScala).map { body =>
+        val ret = new SynchronizedStmt()
+        ret.setBody(body)
+        n.setBody(ret)
+      }
     }
     n
   }
-  
 }  

@@ -13,8 +13,12 @@
  */
 package com.mysema.scalagen
 
-import com.github.javaparser.ast.body.ModifierSet
 import UnitTransformer._
+import com.github.javaparser.ast._
+import com.github.javaparser.ast.body._
+import com.github.javaparser.ast.`type`.ClassOrInterfaceType
+import com.github.javaparser.ast.expr._
+import com.github.javaparser.ast.stmt.ReturnStmt
 
 object Enums extends Enums
 
@@ -23,41 +27,47 @@ object Enums extends Enums
  */
 class Enums extends UnitTransformerBase {
   
-  private val enumerationType = new ClassOrInterface("Enumeration")
+  private val enumerationType = new ClassOrInterfaceType("Enumeration")
   
-  private val valType = new ClassOrInterface("Val")
+  private val valType = new ClassOrInterfaceType("Val")
   
-  private val valueType = new ClassOrInterface("Value")
+  private val valueType = new ClassOrInterfaceType("Value")
   
   def transform(cu: CompilationUnit): CompilationUnit = {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }   
     
-  override def visit(n: EnumDecl, arg: CompilationUnit) = {
+  override def visit(n: EnumDeclaration, arg: CompilationUnit) = {
     // transform enums into Scala Enumerations
-    val clazz = new ClassOrInterfaceDecl()
-    clazz.setExtends(enumerationType :: Nil)
+    val clazz = new ClassOrInterfaceDeclaration()
+    clazz.setExtendedTypes(enumerationType :: Nil)
     clazz.setName(n.getName)
-    clazz.setModifiers(OBJECT)
+    clazz.setModifiers(ScalaModifier.OBJECT)
     clazz.setMembers(createMembers(n))
     clazz
   }
   
-  private def createMembers(n: EnumDecl): JavaList[BodyDecl] = {
-    val typeDecl = new ClassOrInterfaceDecl(0, false, n.getName)
-    typeDecl.setExtends(valType :: Nil)
-    typeDecl.setImplements(n.getImplements)
+  private def createMembers(n: EnumDeclaration): NodeList[BodyDeclaration[_]] = {
+    val typeDecl = new ClassOrInterfaceDeclaration(emptyModifiers, false, n.getName.asString)
+    typeDecl.setExtendedTypes(valType :: Nil)
+    typeDecl.setImplementedTypes(n.getImplementedTypes)
     typeDecl.setMembers(n.getMembers.filterNot(isStatic))
     
     // entries
-    val ty = new ClassOrInterface(n.getName)
+    val ty = new ClassOrInterfaceType(n.getName.asString)
     val entries = n.getEntries.map(e => {
-      val init = new ObjectCreation(null, ty, e.getArgs)
-      new Field(ModifierSet.FINAL, ty, new Variable(e.getName, init)) })
+      val init = new ObjectCreationExpr(null, ty, e.getArguments)
+      new FieldDeclaration(
+        NodeList.nodeList(Modifier.finalModifier),
+        NodeList.nodeList[AnnotationExpr](),
+        NodeList.nodeList(new VariableDeclarator(ty, e.getName.asString, init))
+      )
+    })
         
     // conversion function
-    val conversion = new Method(IMPLICIT, ty, "convertValue")
-    conversion.setBody(new Return(new Cast(ty, "v")))
+    val conversion = new MethodDeclaration(emptyModifiers, ty, "convertValue")
+    conversion.addModifier(ScalaModifier.IMPLICIT)
+    conversion.setBody(new ReturnStmt(new CastExpr(ty, "v")))
     conversion.setParameters(new Parameter(valueType, "v") :: Nil)
           
     entries ::: typeDecl :: n.getMembers.filter(isStatic) ::: conversion :: Nil

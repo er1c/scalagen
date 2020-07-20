@@ -15,6 +15,9 @@ package com.mysema.scalagen
 
 import java.util.ArrayList
 import UnitTransformer._
+import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast.Node
+import com.github.javaparser.ast.stmt._
 
 object Rethrows extends Rethrows
 
@@ -27,7 +30,7 @@ class Rethrows extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
     
-  override def visit(n: Try, arg: CompilationUnit): Node = withCommentsFrom(n, arg) {
+  override def visit(n: TryStmt, arg: CompilationUnit): Node = withCommentsFrom(n, arg) {
     if (n.getFinallyBlock == null && !isEmpty(n.getCatchClauses) && n.getCatchClauses.filter(isPrinted).isEmpty) {
       extract(super.visit(n.getTryBlock, arg).asInstanceOf[Statement])
     } else {
@@ -35,9 +38,9 @@ class Rethrows extends UnitTransformerBase {
     }
   }
   
-  private def isPrinted(c: Catch): Boolean = {
-    val block = c.getCatchBlock()
-    block.isEmpty || block.size > 1 || (block.size == 1 && !block(0).isInstanceOf[Throw])
+  private def isPrinted(c: CatchClause): Boolean = {
+    val block = c.getBody()
+    block.isEmpty || block.size > 1 || (block.size == 1 && !block(0).isInstanceOf[ThrowStmt])
   }
     
 }

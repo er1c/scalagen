@@ -14,6 +14,9 @@
 package com.mysema.scalagen
 
 import UnitTransformer._
+import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast.Node
+import com.github.javaparser.ast.expr.NameExpr
 
 class RenameTransformer(replacements: Map[String, String]) extends UnitTransformerBase {
   
@@ -21,9 +24,9 @@ class RenameTransformer(replacements: Map[String, String]) extends UnitTransform
     cu.accept(this, cu).asInstanceOf[CompilationUnit]
   }
   
-  override def visit(n: Name, arg: CompilationUnit): Node = {
+  override def visit(n: NameExpr, arg: CompilationUnit): Node = {
     if (replacements.contains(n.getNameAsString)) {
-      new Name(replacements(n.getNameAsString))
+      new NameExpr(replacements(n.getNameAsString))
     } else {
       n
     }

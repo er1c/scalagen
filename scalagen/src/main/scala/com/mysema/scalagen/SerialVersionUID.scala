@@ -13,9 +13,10 @@
  */
 package com.mysema.scalagen
 
-import java.util.ArrayList
-import com.github.javaparser.ast.CompilationUnit
 import UnitTransformer._
+import com.github.javaparser.ast._
+import com.github.javaparser.ast.body._
+import com.github.javaparser.ast.expr._
 
 object SerialVersionUID extends SerialVersionUID
 
@@ -28,14 +29,14 @@ class SerialVersionUID extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
   
-  override def visit(nn: ClassOrInterfaceDecl, cu: CompilationUnit): ClassOrInterfaceDecl = {      
-    val n = super.visit(nn, cu).asInstanceOf[ClassOrInterfaceDecl]
+  override def visit(nn: ClassOrInterfaceDeclaration, cu: CompilationUnit): ClassOrInterfaceDeclaration = {      
+    val n = super.visit(nn, cu).asInstanceOf[ClassOrInterfaceDeclaration]
     if (n.getMembers == null) {
       return n
     }
     
-    val varAndField = n.getMembers.collect { case f: Field => f }    
-       .flatMap { f => f.getVariables.map( v => (v.getId.getName,v,f)) }
+    val varAndField = n.getMembers.collect { case f: FieldDeclaration => f }    
+       .flatMap { f => f.getVariables.map( v => (v.getNameAsString,v,f)) }
        .find(_._1 == "serialVersionUID").map(t => (t._2,t._3))
        .getOrElse(null)
        
@@ -46,8 +47,12 @@ class SerialVersionUID extends UnitTransformerBase {
         //n.getMembers.remove(varAndField._2)
         n.setMembers( n.getMembers.filterNot(_ == varAndField._2) )
       }
-      val value = varAndField._1.getInit
-      n.setAnnotations(new SingleMemberAnnotation("SerialVersionUID", value) :: n.getAnnotations)
+
+      val member = new SingleMemberAnnotationExpr()
+      member.setName(new Name("SerialVersionUID"))
+      varAndField._1.getInitializer.asScala.foreach{ member.setMemberValue }
+
+      n.setAnnotations(member :: n.getAnnotations)
     }
     n
   }

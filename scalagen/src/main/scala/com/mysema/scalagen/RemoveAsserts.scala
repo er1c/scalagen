@@ -15,6 +15,8 @@ package com.mysema.scalagen
 
 import java.util.ArrayList
 import UnitTransformer._
+import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast.expr.MethodCallExpr
 
 object RemoveAsserts extends RemoveAsserts
 
@@ -31,8 +33,8 @@ class RemoveAsserts extends UnitTransformerBase {
     
   // TODO : don't remove method calls when used as statements
   
-  override def visit(n: MethodCall, arg: CompilationUnit) = n match {
-    case MethodCall(str("Assert"), _, a :: rest) => a.accept(this, arg)
+  override def visit(n: MethodCallExpr, arg: CompilationUnit) = n match {
+    case MethodCall(str("Assert") , _, a :: rest) => a.accept(this, arg)
     case _ => super.visit(n, arg)
   }
     

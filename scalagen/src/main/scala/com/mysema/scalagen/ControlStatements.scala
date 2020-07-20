@@ -14,9 +14,26 @@
 package com.mysema.scalagen
 
 import com.github.javaparser.ast.visitor._
-import java.util.ArrayList
 import UnitTransformer._
 import com.mysema.scalagen.ast.BeginClosureExpr
+import com.github.javaparser.ast.expr.NameExpr
+import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast.Node
+import com.github.javaparser.ast.expr.MethodCallExpr
+import com.github.javaparser.ast.stmt.ForStmt
+import com.github.javaparser.ast.expr.VariableDeclarationExpr
+import com.github.javaparser.ast.stmt.ForEachStmt
+import com.github.javaparser.ast.stmt.Statement
+import com.github.javaparser.ast.expr.Expression
+import com.github.javaparser.ast.stmt.BlockStmt
+import com.github.javaparser.ast.expr.EnclosedExpr
+import com.github.javaparser.ast.stmt.IfStmt
+import com.github.javaparser.ast.stmt.ExpressionStmt
+import com.github.javaparser.ast.expr.ConditionalExpr
+import com.github.javaparser.ast.expr.AssignExpr
+import com.github.javaparser.ast.stmt.BreakStmt
+import com.github.javaparser.ast.stmt.SwitchEntry
+import com.github.javaparser.ast.body.VariableDeclarator
 
 object ControlStatements extends ControlStatements
 
@@ -25,9 +42,9 @@ object ControlStatements extends ControlStatements
  */
 class ControlStatements extends UnitTransformerBase {
   
-  private val KEY = new Name("key")
+  private val KEY = new NameExpr("key")
   
-  private val VALUE = new Name("value")
+  private val VALUE = new NameExpr("value")
   
   private val toUnderscore = new ModifierVisitor[Set[String]] {    
     override def visitName(n: String, arg: Set[String]): String = {
@@ -48,11 +65,14 @@ class ControlStatements extends UnitTransformerBase {
   }
   
   private val toKeyAndValue = new ModifierVisitor[String] {
-    override def visit(nn: MethodCall, arg: String): Node = {
-      val n = super.visit(nn, arg).asInstanceOf[MethodCall]
+    override def visit(nn: MethodCallExpr, arg: String): Node = {
+      val n = super.visit(nn, arg).asInstanceOf[MethodCallExpr]
       n match {
-        case MethodCall(str(`arg`), "getKey", Nil) => KEY
-        case MethodCall(str(`arg`), "getValue", Nil) => VALUE
+        // case MethodCall(str(`arg`), "getKey", Nil) => KEY
+        // case MethodCall(str(`arg`), "getValue", Nil) => VALUE
+        // Scope, name, arguments
+        case MethodCall(str("arg"), "getKey", Nil) => KEY
+        case MethodCall(str("arg"), "getValue", Nil) => VALUE
         case _ => n
       }
     }    
@@ -62,62 +82,64 @@ class ControlStatements extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
         
-  override def visit(nn: For, arg: CompilationUnit): Node = {
+  override def visit(nn: ForStmt, arg: CompilationUnit): Node = {
     // transform
     //   for (int i = 0; i < x; i++) block 
     // into
     //   for (i <- 0 until x) block
-    val n = super.visit(nn, arg).asInstanceOf[For]    
+    val n = super.visit(nn, arg).asInstanceOf[ForStmt]    
     n match {
-      case For((init: VariableDeclaration) :: Nil, l lt r, incr(_) :: Nil, _) => {
-        val until = new MethodCall(init.getVars.get(0).getInit, "until", r :: Nil)
-        init.getVars.get(0).setInit(null)
-        new Foreach(init, until, n.getBody)
+      case For((init: VariableDeclarationExpr) :: Nil, Some(l lt r), incr(_) :: Nil, _) => {
+        val until = new MethodCallExpr(init.getVariables.get(0).getInitializer().asScala.getOrElse(null), "until", r :: Nil)
+        init.getVariables.get(0).setInitializer(null)
+        new ForEachStmt(init, until, n.getBody)
       }
       case _ => n
     }
   }
   
-  override def visit(nn: MethodCall, arg: CompilationUnit): Node = {
+  override def visit(nn: MethodCallExpr, arg: CompilationUnit): Node = {
     // transform
     //   System.out.println
     // into 
     //   println
-    val n = super.visit(nn, arg).asInstanceOf[MethodCall]
+    val n = super.visit(nn, arg).asInstanceOf[MethodCallExpr]
     n match {
       case MethodCall(str("System.out"), "println", args) => {
-        new MethodCall(null, "println", args)
+        new MethodCallExpr(null, "println", args)
       }
       case _ => n
     }
   }
   
-  override def visit(nn: Foreach, arg: CompilationUnit): Node = {
-    val n = super.visit(nn, arg).asInstanceOf[Foreach]
+  override def visit(nn: ForEachStmt, arg: CompilationUnit): Node = {
+    val n = super.visit(nn, arg).asInstanceOf[ForEachStmt]
     n match {
-      case Foreach(
-          VariableDeclaration(t, v :: Nil), 
+      case ForEach(
+          VariableDeclaration(t, (v: VariableDeclarator) :: Nil), 
           MethodCall(scope, "entrySet", Nil), body) => {
-        val vid = v.getId.toString
-        new Foreach(
-            VariableDeclaration(0, "(key, value)", Type.Object), 
-            scope, n.getBody.accept(toKeyAndValue, vid).asInstanceOf[Statement])            
+        val vid = v.getNameAsString
+        new ForEachStmt(
+          VariableDeclaration(emptyModifiers, "(key, value)", JavaType.Object), 
+          scope.getOrElse(null), 
+          n.getBody.accept(toKeyAndValue, vid).asInstanceOf[Statement]
+        )
       }
       case _ => n
     }    
   }
   
   // TODO : maybe move this to own class
-  override def visit(nn: Block, arg: CompilationUnit): Node = {
+  override def visit(nn: BlockStmt, arg: CompilationUnit): Node = {
     // simplify
     //   for (format <- values if format.mimetype == contentType) return format
     //   defaultFormat
     // into
     //   values.find(_.mimetype == contenType).getOrElse(defaultFormat)
-    val n = super.visit(nn, arg).asInstanceOf[Block]
+    val n = super.visit(nn, arg).asInstanceOf[BlockStmt]
     n match {
       case Block( 
-          Foreach(v, it, If(cond, Return(rv1), null)) ::
+          ForEach(v, it, If(cond, Return(rv1), null)) ::
           Return(rv2) :: Nil) => createFindCall(it, v, cond, rv1, rv2)
       case _ => n
     }
@@ -129,30 +151,30 @@ class ControlStatements extends UnitTransformerBase {
     case _ => List(new BeginClosureExpr(vid), expr)
   }
   
-  private def createFindCall(it: Expression, v: VariableDeclaration, 
+  private def createFindCall(it: Expression, v: VariableDeclarationExpr, 
       cond: Expression, rv1: Expression, rv2: Expression): Statement = {
-    val vid = v.getVars.get(0).getId.toString
+    val vid = v.getVariables.get(0).getNameAsString
     val newCond = createClosure(vid, cond)
     val newIt = it match {
-      case MethodCall(_, "until", _ :: Nil) => new Enclosed(it)
+      case MethodCall(_, "until", _ :: Nil) => new EnclosedExpr(it)
       case _ => it
     }
-    val findCall = new MethodCall(newIt, "find", newCond)
+    val findCall = new MethodCallExpr(newIt, "find", newCond)
     val expr = if (vid == rv1.toString) findCall
-               else new MethodCall(findCall, "map", createClosure(vid, rv1))
-    val getOrElse = new MethodCall(expr, "getOrElse", rv2 :: Nil)
-    new Block(new ExpressionStmt(getOrElse) :: Nil)
+               else new MethodCallExpr(findCall, "map", createClosure(vid, rv1))
+    val getOrElse = new MethodCallExpr(expr, "getOrElse", rv2 :: Nil)
+    new BlockStmt(new ExpressionStmt(getOrElse) :: Nil)
   } 
   
-  override def visit(nn: If, arg: CompilationUnit): Node = {
+  override def visit(nn: IfStmt, arg: CompilationUnit): Node = {
     // transform
     //   if (condition) target = x else target = y
     // into
     //   target = if (condition) e else y    
-    val n = super.visit(nn, arg).asInstanceOf[If]    
+    val n = super.visit(nn, arg).asInstanceOf[IfStmt]    
     n match {
-      case If(cond, Stmt(t1 set v1), Stmt(t2 set v2)) if t1 == t2 => {
-        new ExpressionStmt(new Assign(t1, new Conditional(n.getCondition, v1, v2), Assign.assign))  
+      case If(cond, Types.Expression(t1 set v1), Some(Types.Expression(t2 set v2))) if t1 == t2 => {
+        new ExpressionStmt(new AssignExpr(t1, new ConditionalExpr(n.getCondition, v1, v2), Assign.assign))  
       }
       case _ => n
     }    
@@ -161,10 +183,10 @@ class ControlStatements extends UnitTransformerBase {
   override def visit(nn: SwitchEntry, arg: CompilationUnit) = {    
     // remove break
     val n = super.visit(nn, arg).asInstanceOf[SwitchEntry]
-    val size = if (n.getStmts == null) 0 else n.getStmts.size
-    if (size > 1 && n.getStmts.get(size-1).isInstanceOf[Break]) {
+    val size = if (n.getStatements == null) 0 else n.getStatements.size
+    if (size > 1 && n.getStatements.get(size-1).isInstanceOf[BreakStmt]) {
       //n.getStmts.remove(size-1)
-      n.setStmts(n.getStmts.dropRight(1))
+      n.setStatements(n.getStatements.dropRight(1))
     }
     n
   }

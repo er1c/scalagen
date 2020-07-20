@@ -15,6 +15,12 @@ package com.mysema.scalagen
 
 import UnitTransformer._
 import com.github.javaparser.ast.expr.Name
+import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
+import com.github.javaparser.ast.body.MethodDeclaration
+import com.github.javaparser.ast.body.FieldDeclaration
+import com.github.javaparser.ast.ImportDeclaration
+import com.github.javaparser.ast.Modifier
 
 /**
  * BeanProperties turns field + accessor combinations into @BeanProperty annotated 
@@ -23,28 +29,28 @@ import com.github.javaparser.ast.expr.Name
 class BeanProperties(targetVersion: ScalaVersion) extends UnitTransformerBase with BeanHelpers {
   
   val BEAN_PROPERTY_IMPORT =
-    if (targetVersion >= Scala210) new Import(new Name("scala.beans.{BeanProperty, BooleanBeanProperty}"), false, false)
-    else new Import(new Name("scala.reflect.{BeanProperty, BooleanBeanProperty}"), false, false)
+    if (targetVersion >= Scala210) new ImportDeclaration(new Name("scala.beans.{BeanProperty, BooleanBeanProperty}"), false, false)
+    else new ImportDeclaration(new Name("scala.reflect.{BeanProperty, BooleanBeanProperty}"), false, false)
      
   def transform(cu: CompilationUnit): CompilationUnit = {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
   
-  override def visit(n: ClassOrInterfaceDecl, cu: CompilationUnit): ClassOrInterfaceDecl = {      
+  override def visit(n: ClassOrInterfaceDeclaration, cu: CompilationUnit): ClassOrInterfaceDeclaration = {      
     // merges getters and setters into properties
-    val t = super.visit(n, cu).asInstanceOf[ClassOrInterfaceDecl]
+    val t = super.visit(n, cu).asInstanceOf[ClassOrInterfaceDeclaration]
     
     // accessors
-    val methods = t.getMembers.collect { case m: Method => m }
+    val methods = t.getMembers.collect { case m: MethodDeclaration => m }
     val getters = methods.filter(m => isBeanGetter(m) || isBooleanBeanGetter(m))
       .map(m => (getProperty(m) ,m)).toMap      
     val setters = methods.filter(m => isBeanSetter(m))
       .map(m => (getProperty(m), m)).toMap
    
     // fields with accessors
-    val fields = t.getMembers.collect { case f: Field => f }
+    val fields = t.getMembers.collect { case f: FieldDeclaration => f }
       .filter(_.isPrivate)
-      .flatMap( f => f.getVariables.map( v => (v.getId.getName,v,f) ))
+      .flatMap( f => f.getVariables.map( v => (v.getNameAsString,v,f) ))
       .filter { case (name,_,_) =>  getters.contains(name) }
           
     // remove accessors 
@@ -56,19 +62,23 @@ class BeanProperties(targetVersion: ScalaVersion) extends UnitTransformerBase wi
       
       // make field public
       val isFinal = field.isFinal
-       field.setModifiers(getter.getModifiers
-          .addModifier(if (isFinal) ModifierSet.FINAL else 0))
-      val annotation = if (getter.getName.startsWith("is")) BOOLEAN_BEAN_PROPERTY else BEAN_PROPERTY 
+      
+      //if (isFinal) field
+      // field.setModifiers(getter.getModifiers
+      //     .addModifier(if (isFinal) Modifier.Key.FINAL else 0))
+      
+      val annotation = if (getter.getNameAsString.startsWith("is")) BOOLEAN_BEAN_PROPERTY else BEAN_PROPERTY 
+
       if (field.getAnnotations == null || !field.getAnnotations.contains(annotation)) {
         field.setAnnotations(field.getAnnotations :+ annotation)
       }      
       
       // handle lazy init
-      if (isLazyCreation(getter.getBody, name)) {
-        variable.setInitializer(getLazyInit(getter.getBody))
-        field.addModifier(LAZY)
+      extractOption(getter.getBody.asScala).filter{ isLazyCreation(_, name) }.foreach { body =>
+        variable.setInitializer(getLazyInit(body))
+        field.addModifier(ScalaModifier.LAZY)
         if (!setters.contains(name)) {
-          field.addModifier(ModifierSet.FINAL)
+          field.addModifier(Modifier.Keyword.FINAL)
         }
       }
     }

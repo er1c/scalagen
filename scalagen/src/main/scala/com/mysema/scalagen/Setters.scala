@@ -14,15 +14,16 @@
 package com.mysema.scalagen
 
 import com.github.javaparser.ast.visitor._
-import java.util.ArrayList
-import UnitTransformer._
+import com.github.javaparser.ast._
+import com.github.javaparser.ast.expr._
 import com.mysema.scalagen.ast.BeginClosureExpr
+import UnitTransformer._
 
 object Setters extends Setters
 
 class Setters extends UnitTransformerBase {
     
-  private val thisExpr = new This()
+  private val thisExpr = new ThisExpr()
   
   def setterToField(s: String) = {
     val name = s.substring(3)
@@ -33,16 +34,16 @@ class Setters extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }    
   
-  override def visit(nn: MethodCall, arg: CompilationUnit): Node = {
+  override def visit(nn: MethodCallExpr, arg: CompilationUnit): Node = {
     // replaces setter invocations with field access
-    val n = super.visit(nn, arg).asInstanceOf[MethodCall]
-    if (n.getName.startsWith("set") &&
-        (n.getScope == null || n.getScope.isInstanceOf[This]) &&
-        n.getArgs.size == 1) {
-      val scope = if (n.getScope != null) n.getScope else thisExpr
-      new Assign(
-          new FieldAccess(scope, setterToField(n.getName)),
-          n.getArgs.get(0),
+    val n = super.visit(nn, arg).asInstanceOf[MethodCallExpr]
+    if (n.getNameAsString.startsWith("set") &&
+        (n.getScope.asScala.isEmpty || n.getScope.asScala.get.isInstanceOf[ThisExpr]) &&
+        n.getArguments.size == 1) {
+      val scope = n.getScope.asScala.getOrElse(thisExpr)
+      new AssignExpr(
+          new FieldAccessExpr(scope, setterToField(n.getNameAsString)),
+          n.getArguments.get(0),
           Assign.assign)      
     } else {
       n

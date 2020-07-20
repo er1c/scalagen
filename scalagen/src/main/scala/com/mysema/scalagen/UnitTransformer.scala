@@ -15,6 +15,10 @@ package com.mysema.scalagen
 
 import com.github.javaparser.ast.expr._
 import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast.stmt.BlockStmt
+import com.github.javaparser.ast.stmt.Statement
+import com.github.javaparser.ast.Node
+import com.github.javaparser.ast.NodeList
 
 object UnitTransformer extends Helpers with Types {
   
@@ -22,21 +26,21 @@ object UnitTransformer extends Helpers with Types {
   implicit def toNameExpr(s: String) = new NameExpr(s)
   
   @inline 
-  implicit def toBlock(s: Statement) = new Block(s :: Nil)
+  implicit def toBlock(s: Statement) = new BlockStmt(new NodeList(s))
   
   private def safeToString(obj: AnyRef): String = if (obj != null) obj.toString else null
             
   //val BOOLEAN_BEAN_PROPERTY_IMPORT = new Import("scala.reflect.BooleanBeanProperty", false, false)
   
-  val BEAN_PROPERTY = new MarkerAnnotation("BeanProperty")
+  val BEAN_PROPERTY = new MarkerAnnotationExpr("BeanProperty")
   
-  val BOOLEAN_BEAN_PROPERTY = new MarkerAnnotation("BooleanBeanProperty")
+  val BOOLEAN_BEAN_PROPERTY = new MarkerAnnotationExpr("BooleanBeanProperty")
       
   abstract class UnitTransformerBase extends ModifierVisitor[CompilationUnit] with UnitTransformer {
         
     override def visit(n: CompilationUnit, arg: CompilationUnit): Node = withCommentsFrom(n, arg) {
       val rv = new CompilationUnit()
-      rv.setPackageDeclaration(filter(n.getPackageDeclaration, arg))
+      filter(n.getPackageDeclaration, arg).foreach{ rv.setPackageDeclaration }
       rv.setImports(filter(n.getImports, arg))
       // arg is replaced with converted instance here
       rv.setTypes(filter(n.getTypes, rv)) 

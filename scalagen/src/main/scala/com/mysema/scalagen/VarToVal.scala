@@ -13,15 +13,16 @@
  */
 package com.mysema.scalagen
 
-import com.github.javaparser.ast.CompilationUnit
+import com.github.javaparser.ast._
+import com.github.javaparser.ast.expr._
+import com.github.javaparser.ast.stmt._
 import UnitTransformer._
 import defs._
-import com.github.javaparser.ast.body.ModifierSet
 
 object VarToVal extends VarToVal
 
 object defs {
-  type Vars = List[Map[String,VariableDeclaration]]
+  type Vars = List[Map[String,VariableDeclarationExpr]]
 }
 
 /**
@@ -36,37 +37,37 @@ class VarToVal extends ModifierVisitor[Vars] with UnitTransformer {
     cu.accept(this, Nil).asInstanceOf[CompilationUnit] 
   }  
   
-  override def visit(n: Block, arg: Vars): Node = withCommentsFrom(n, arg) {
-    if (n.getStmts == null) {
+  override def visit(n: BlockStmt, arg: Vars): Node = withCommentsFrom(n, arg) {
+    if (n.getStatements == null) {
       return n
     }
-    val vars = n.getStmts.collect { case Stmt(v: VariableDeclaration) => v }
-      .flatMap(v => v.getVars.map(va => (va.getId.getName,v)))
+    val vars = n.getStatements.collect { case UnitTransformer.Expression(v: VariableDeclarationExpr) => v }
+      .flatMap(v => v.getVariables.map(va => (va.getNameAsString,v)))
       .toMap    
     // set vars to final
-    vars.values.foreach(_.addModifier(ModifierSet.FINAL))    
+    vars.values.foreach(_.addModifier(Modifier.Keyword.FINAL))    
     super.visit(n,  vars :: arg)
   }
   
-  override def visit(n: Assign, arg: Vars): Node = withCommentsFrom(n, arg) {
+  override def visit(n: AssignExpr, arg: Vars): Node = withCommentsFrom(n, arg) {
     removeFinal(n.getTarget.toString, arg)
     n
   }
   
-  override def visit(n: Unary, arg: Vars): Node = {
+  override def visit(n: UnaryExpr, arg: Vars): Node = {
     if (operators.contains(n.getOperator)) {
-      removeFinal(n.getExpr.toString, arg) 
+      removeFinal(n.getExpression.toString, arg) 
     } 
     n
   }
   
   // leave VariableDeclarations unchanged
-  override def visit(n: VariableDeclaration, arg: Vars): Node = n
+  override def visit(n: VariableDeclarationExpr, arg: Vars): Node = n
     
   private def removeFinal(key: String, arg: Vars) {
     arg.find(_.contains(key))        
       .flatMap(_.get(key))
-      .foreach(_.removeModifier(ModifierSet.FINAL))    
+      .foreach(_.removeModifier(Modifier.Keyword.FINAL))
   }
   
 }

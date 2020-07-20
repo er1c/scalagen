@@ -39,7 +39,7 @@ class SerializationTest extends AbstractParserTest {
   def findNodesOfType[A: ClassTag](node: Node): Seq[A] = {
     val buffer = new ArrayBuffer[A]()
     val nodeFinder = new NodeFinder[A](buffer += _)
-    nodeFinder.visitDepthFirst(node)
+    nodeFinder.visitBreadthFirst(node)
     buffer.toVector
   }
 

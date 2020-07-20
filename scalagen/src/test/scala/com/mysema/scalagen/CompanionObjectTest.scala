@@ -14,12 +14,8 @@
 package com.mysema.scalagen
 
 import org.junit.Assert._
-import java.io.FileNotFoundException
-import com.github.javaparser.ParseException
-import com.github.javaparser.ast.CompilationUnit
 import org.junit.Test
 import com.mysema.examples._
-import UnitTransformer._
 
 class CompanionObjectTest extends AbstractParserTest {
 
@@ -29,8 +25,8 @@ class CompanionObjectTest extends AbstractParserTest {
     assertEquals(1, unit.getTypes.size)
     unit = CompanionObject.transform(unit)
     assertEquals(1, unit.getTypes.size)
-    assertEquals(OBJECT, unit.getTypes.get(0).getModifiers)
-    assertEquals("WithStatic", unit.getTypes.get(0).getName)
+    //assertEquals(OBJECT, unit.getTypes.get(0).getModifiers)
+    assertEquals("WithStatic", unit.getTypes.get(0).getNameAsString)
   }
 
   @Test

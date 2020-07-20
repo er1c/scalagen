@@ -13,10 +13,14 @@
  */
 package com.mysema.scalagen
 
-import java.util.ArrayList
-
 import UnitTransformer._
+import com.github.javaparser.ast.CompilationUnit
 import com.github.javaparser.ast.NodeList
+import com.github.javaparser.ast.body.TypeDeclaration
+import com.github.javaparser.ast.body.ConstructorDeclaration
+import com.github.javaparser.ast.ImportDeclaration
+import com.github.javaparser.ast.body.BodyDeclaration
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
 
 object CompanionObject extends CompanionObject
 
@@ -26,11 +30,12 @@ object CompanionObject extends CompanionObject
 // TODO : use ModifierVisitorAdapter
 // TODO : get totally rid of mutable lists
 class CompanionObject extends UnitTransformer {
+  import UnitTransformer._
 
   def transform(cu: CompilationUnit): CompilationUnit = {
     if (cu.getTypes != null) {
-      val types = cu.getTypes.filter(!_.getModifiers.isObject)
-      val cuTypes = new NodeList[TypeDecl]()
+      val types = cu.getTypes.filter(!_.isObject)
+      val cuTypes = new NodeList[TypeDeclaration[_]]()
 	    cuTypes.addAll(cu.getTypes)
       handleTypes(cu, types, cuTypes)
       cu.setTypes(cuTypes)
@@ -38,37 +43,40 @@ class CompanionObject extends UnitTransformer {
     cu
   }
   
-  private def handleTypes(cu: CompilationUnit, types: Seq[TypeDecl], members: JavaList[_ >: TypeDecl]) {    
+  private def handleTypes(cu: CompilationUnit, types: Seq[TypeDeclaration[_]], members: JavaList[_ >: TypeDeclaration[_]]) {    
     types.foreach { t => handleType(cu,t) }
     
     // get companion objects
-    val typeToCompanion = types.map(t => (t, getCompanionObject(t)))
-      .filter(_._2 != null).toMap
+    val typeToCompanion: Map[TypeDeclaration[_], TypeDeclaration[_]] =
+      types
+        .map(t => (t, getCompanionObject(t)))
+        .filterNot{ _._2 == null }
+        .toMap
        
     for ( (cl, companion) <- typeToCompanion) {
       handleClassAndCompanion(cu, members, cl, companion)
     }   
   }
     
-  private def handleType(cu: CompilationUnit, clazz: TypeDecl) {
+  private def handleType(cu: CompilationUnit, clazz: TypeDeclaration[_]) {
     if (clazz.getMembers != null) {
-      val types = clazz.getMembers.collect { case t: TypeDecl => t }
-        .filter(!_.getModifiers.isObject)    
-      val members = new ArrayList[BodyDecl](clazz.getMembers)
+      val types = clazz.getMembers.collect { case t: TypeDeclaration[_] => t }
+        .filter(!_.isObject)    
+      val members = new NodeList[BodyDeclaration[_]](clazz.getMembers)
       handleTypes(cu, types, members)
       clazz.setMembers(members)
     }   
   }  
   
-  private def handleClassAndCompanion(cu: CompilationUnit, members: JavaList[_ >: TypeDecl], 
-      clazz: TypeDecl, companion: TypeDecl) {
+  private def handleClassAndCompanion(cu: CompilationUnit, members: JavaList[_ >: TypeDeclaration[_]], 
+      clazz: TypeDeclaration[_], companion: TypeDeclaration[_]) {
     // add companion
     members.add(members.indexOf(clazz), companion)
     if (clazz.getMembers.isEmpty) {
       members.remove(clazz)
     } else if (clazz.getMembers.size == 1) {
       clazz.getMembers.get(0) match {
-        case c: Constructor => {
+        case c: ConstructorDeclaration => {
           // remove private empty constructor
           if (c.isPrivate && isEmpty(c.getParameters)) {
             members.remove(clazz)
@@ -80,11 +88,11 @@ class CompanionObject extends UnitTransformer {
 
     // add import for companion object members, if class has not been removed
     if (members.contains(clazz)) {
-      cu.setImports(cu.getImports :+ new Import(clazz.getName, false, true))
+      cu.setImports(cu.getImports :+ new ImportDeclaration(clazz.getNameAsString, false, true))
     }
   }
 
-  private def getCompanionObject(t: TypeDecl): TypeDecl = {
+  private def getCompanionObject(t: TypeDeclaration[_]): TypeDeclaration[_] = {
     if (t.getMembers == null) {
       return null
     }
@@ -92,13 +100,12 @@ class CompanionObject extends UnitTransformer {
     val staticMembers = t.getMembers.filter(isStatic)
     if (staticMembers.nonEmpty) {
       t.setMembers(t.getMembers.filterNot(staticMembers.contains))
-      var companion = new ClassOrInterfaceDecl(OBJECT, false, t.getName)
+      var companion = new ClassOrInterfaceDeclaration(emptyModifiers, false, t.getNameAsString)
+      companion.addModifier(ScalaModifier.OBJECT)
       companion.setMembers(staticMembers)
       companion
     } else {
       null
     }
   }
-  
-
 }

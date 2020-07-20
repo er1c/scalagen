@@ -15,6 +15,10 @@ package com.mysema.scalagen
 
 import com.github.javaparser.ast.CompilationUnit
 import UnitTransformer._
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
+import com.github.javaparser.ast.Node
+import com.github.javaparser.ast.body.MethodDeclaration
+import com.github.javaparser.ast.body.FieldDeclaration
 
 object Underscores extends Underscores
 
@@ -34,14 +38,14 @@ class Underscores extends UnitTransformerBase with BeanHelpers {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
   
-  override def visit(n: ClassOrInterfaceDecl, cu: CompilationUnit): Node = {
-    val getters = n.getMembers.collect { case m: Method => m }
+  override def visit(n: ClassOrInterfaceDeclaration, cu: CompilationUnit): Node = {
+    val getters = n.getMembers.collect { case m: MethodDeclaration => m }
       .filter(m => isBeanGetter(m) || isBooleanBeanGetter(m))
       .map(getProperty)      
     
-    val variables = n.getMembers.collect { case f: Field => f }
+    val variables = n.getMembers.collect { case f: FieldDeclaration => f }
       .flatMap( _.getVariables)
-      .map(_.getId.getName)
+      .map(_.getNameAsString)
       .filter(n => n.startsWith("_") && getters.contains(n.substring(1)))
       .toSet
       

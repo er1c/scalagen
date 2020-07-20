@@ -15,36 +15,42 @@ package com.mysema.scalagen
 
 import com.mysema.scala.BeanUtils
 import Types._
+import com.github.javaparser.ast.body.MethodDeclaration
+import com.github.javaparser.ast.stmt.ReturnStmt
+import com.github.javaparser.ast.stmt.BlockStmt
 
 /**
  * 
  */
 trait BeanHelpers extends Helpers {
+  import Helpers._
+  import Types._
     
   private val getter = "get\\w+".r
   
   private val setter = "set\\w+".r
   
   private val booleanGetter = "is\\w+".r
-  
-  def isBeanGetter(method: Method): Boolean = method match {
-    case Method(getter(_*), t, Nil, Return(field(_))) => true
-    case Method(getter(_*), t, Nil, b: Block) => isLazyCreation(b, getProperty(method))
+
+
+  def isBeanGetter(method: MethodDeclaration): Boolean = method match {
+    case Method(getter(_*), _, Nil, Some(Return(field(_)))) => true
+    case Method(getter(_*), _, Nil, Some(b: BlockStmt)) => isLazyCreation(b, getProperty(method))
     case _ => false
   }
   
-  def isBooleanBeanGetter(method: Method): Boolean = method match {
-    case Method(booleanGetter(_*), Type.Boolean, Nil, Return(field(_))) => true
-    case Method(booleanGetter(_*), Type.Boolean, Nil, b: Block) => isLazyCreation(b, getProperty(method))
+  def isBooleanBeanGetter(method: MethodDeclaration): Boolean = method match {
+    case Method(booleanGetter(_*), JavaType.Boolean, Nil, Some(Return(field(_)))) => true
+    case Method(booleanGetter(_*), JavaType.Boolean, Nil, Some(b: BlockStmt)) => isLazyCreation(b, getProperty(method))
     case _ => false
   }
       
-  def isBeanSetter(method: Method): Boolean = method match {
-    case Method(setter(_*), Type.Void, _ :: Nil, Stmt(_ set _)) => true
+  def isBeanSetter(method: MethodDeclaration): Boolean = method match {
+    case Method(setter(_*), JavaType.Void, _ :: Nil, Some(Expression(_ set _))) => true
     case _ => false
   }  
   
-  def getProperty(method: Method) = {
+  def getProperty(method: MethodDeclaration) = {
     val name = method.getName
     BeanUtils.uncapitalize(name.asString.substring(if (name.asString.startsWith("is")) 2 else 3))
   }

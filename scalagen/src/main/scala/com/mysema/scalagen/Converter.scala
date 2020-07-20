@@ -18,14 +18,14 @@ import java.io.{ByteArrayInputStream, File}
 import com.github.javaparser.JavaParser
 import com.github.javaparser.ast.{CompilationUnit, ImportDeclaration, NodeList}
 import org.apache.commons.io.FileUtils
-import java.util.ArrayList
 
 import com.github.javaparser.ParseException
 import java.io.ByteArrayInputStream
 import java.nio.charset.Charset
 import java.util.regex.Pattern
+import com.github.javaparser.ParseResult
 
-object Converter {
+object Converter extends Helpers {
   
   /**
    * default instance for Converter type
@@ -113,7 +113,7 @@ class Converter(encoding: String, transformers: List[UnitTransformer]) {
   
   def convertFile(in: File, out: File) {
     try {
-      val compilationUnit = JavaParser.parse(in, Charset.forName(encoding))
+      val compilationUnit = new JavaParser().parse(in, Charset.forName(encoding))
       val sources = toScala(compilationUnit)   
       FileUtils.writeStringToFile(out, sources, "UTF-8")  
     } catch {
@@ -122,11 +122,22 @@ class Converter(encoding: String, transformers: List[UnitTransformer]) {
   }
   
   def convert(javaSource: String, settings: ConversionSettings = ConversionSettings()): String = {
-    val compilationUnit = JavaParser.parse(javaSource)
+    val compilationUnit = new JavaParser().parse(javaSource)
     toScala(compilationUnit, settings)
   }
   
-  def toScala(unit: CompilationUnit, settings: ConversionSettings = ConversionSettings()): String = {
+  def toScala(unit: ParseResult[CompilationUnit], settings: ConversionSettings = ConversionSettings()): String = {
+    unit.getResult().asScala match {
+      case Some(s) => toScala(s)
+      case None    => throw new ParseException(s"Failed parsing: ${unit.getProblems()}")
+    }
+  }
+
+  def toScala(unit: CompilationUnit): String = {
+    toScala(unit, ConversionSettings())
+  }
+
+  def toScala(unit: CompilationUnit, settings: ConversionSettings): String = {
     if (unit.getImports == null) {
       unit.setImports(new NodeList[ImportDeclaration]())  
     }    

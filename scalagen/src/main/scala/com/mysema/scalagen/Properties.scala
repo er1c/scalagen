@@ -16,6 +16,11 @@ package com.mysema.scalagen
 import java.util.ArrayList
 import com.mysema.scala.BeanUtils
 import UnitTransformer._
+import com.github.javaparser.ast._
+import com.github.javaparser.ast.body._
+import com.github.javaparser.ast.expr._
+import com.github.javaparser.ast.stmt._
+import com.github.javaparser.ast.`type`.VoidType
 
 object Properties extends Properties
 
@@ -29,44 +34,46 @@ class Properties extends UnitTransformerBase {
     cu.accept(this, cu).asInstanceOf[CompilationUnit] 
   }  
   
-  override def visit(n: ClassOrInterfaceDecl, cu: CompilationUnit): ClassOrInterfaceDecl = {      
-    val t = super.visit(n, cu).asInstanceOf[ClassOrInterfaceDecl]
+  override def visit(n: ClassOrInterfaceDeclaration, cu: CompilationUnit): ClassOrInterfaceDeclaration = {      
+    val t = super.visit(n, cu).asInstanceOf[ClassOrInterfaceDeclaration]
     
     // accessors
-    val getters = t.getMembers.collect { case m: Method => m }
+    val getters = t.getMembers.collect { case m: MethodDeclaration => m }
       .filter(m => isGetter(m))
       .map(m => (m.getName,m)).toMap      
     
     // fields with accessors
-    val fields = t.getMembers.collect { case f: Field => f }
-      .filter(_.getModifiers.isPrivate)
-      .flatMap( f => f.getVariables.map( v => (v.getId.getName,v,f) ))
-      .filter { case (name,_,_) =>  getters.contains(name) }
+    val fields = t.getMembers.collect { case f: FieldDeclaration => f }
+      .filter(_.isPrivate)
+      .flatMap( f => f.getVariables.map( v => (v.getName,v,f) ))
+      .filter { case (name,_,_) => getters.contains(name) }
           
     // remove accessors 
     for ( (name, variable, field) <- fields) {
       var getter = getters(name)
-      val body = getter.getBody
-      if (getter.getModifiers.isAbstract) {
+      val body = getter.getBody.asScala
+      if (getter.isAbstract) {
         t.setMembers(t.getMembers.filterNot(_ == getter))
-        field.removeModifier(PRIVATE)
-      } else if (isReturnFieldStmt(body(0))) {
+        field.removeModifier(Modifier.Keyword.PRIVATE)
+      } else if (body.isDefined && isReturnFieldStmt(body.get(0))) {
         //t.getMembers.remove(getter)
         t.setMembers(t.getMembers.filterNot(_ == getter))
         field.setModifiers(getter.getModifiers)
-      } else if (isLazyCreation(body,name)) {
+      } else if (body.isDefined && isLazyCreation(body.get,name.toString)) {
         //t.getMembers.remove(getter)
         t.setMembers(t.getMembers.filterNot(_ == getter))
-        variable.setInit(getLazyInit(body))
-        field.setModifiers(getter.getModifiers
-          .addModifier(LAZY).addModifier(ModifierSet.FINAL))
+        variable.setInitializer(getLazyInit(body.get))
+
+        field.setModifiers(getter.getModifiers)
+        field.addModifier(ScalaModifier.LAZY)
+        field.addModifier(Modifier.Keyword.FINAL)
       }            
     }    
     t
   }
   
-  private def isGetter(method: Method): Boolean = method match {
-    case Method(n, t, Nil, Block(_ :: rest)) if !t.isInstanceOf[VoidType] => true
+  private def isGetter(method: MethodDeclaration): Boolean = method match {
+    case Method(n, t, Nil, Some(Block(_ :: rest))) if !t.isInstanceOf[VoidType] => true
     case _ => false
   }    
       

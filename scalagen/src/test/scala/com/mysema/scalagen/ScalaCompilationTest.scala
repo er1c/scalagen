@@ -28,6 +28,7 @@ import scala.tools.nsc.Settings
 
 import scala.collection.JavaConverters._
 import ScalaCompilationTest._
+import com.github.javaparser.ParseException
 object ScalaCompilationTest {
 
   @Parameters
@@ -47,10 +48,13 @@ class ScalaCompilationTest(private var file: File) extends AbstractParserTest wi
 
   @Test
   def Compile {
-    var unit = JavaParser.parse(new FileInputStream(file))
-    val source = toScala(unit)
+    var unit = new JavaParser().parse(new FileInputStream(file))
+    val source = unit.getResult().asScala match {
+      case Some(s) => toScala(s)
+      case None    => throw new ParseException(s"Failed parsing: ${unit.getProblems()}")
+    }
     val compilerSettingRegex = """compile: (.*)""".r
-    val compilerSettingsModifier =  compilerSettingRegex.findFirstIn(unit.toString) match {
+    val compilerSettingsModifier = compilerSettingRegex.findFirstIn(unit.toString) match {
       case Some(compilerSettingRegex(compilerSettings)) =>
         { settings: Settings =>
           settings.processArgumentString(compilerSettings)
