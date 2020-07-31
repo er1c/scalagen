@@ -62,7 +62,7 @@ class CompanionObject extends UnitTransformer {
     if (clazz.getMembers != null) {
       val types = clazz.getMembers.collect { case t: TypeDeclaration[_] => t }
         .filter(!_.isObject)    
-      val members = new NodeList[BodyDeclaration[_]](clazz.getMembers)
+      val members = NodeList.nodeList(clazz.getMembers)
       handleTypes(cu, types, members)
       clazz.setMembers(members)
     }   

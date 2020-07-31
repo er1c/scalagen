@@ -14,24 +14,15 @@
 package com.mysema.scalagen
 
 import com.mysema.scala.BeanUtils
-import Types._
 import com.github.javaparser.ast.body.MethodDeclaration
-import com.github.javaparser.ast.stmt.ReturnStmt
 import com.github.javaparser.ast.stmt.BlockStmt
 
-/**
- * 
- */
 trait BeanHelpers extends Helpers {
-  import Helpers._
   import Types._
     
   private val getter = "get\\w+".r
-  
   private val setter = "set\\w+".r
-  
   private val booleanGetter = "is\\w+".r
-
 
   def isBeanGetter(method: MethodDeclaration): Boolean = method match {
     case Method(getter(_*), _, Nil, Some(Return(field(_)))) => true
@@ -50,8 +41,8 @@ trait BeanHelpers extends Helpers {
     case _ => false
   }  
   
-  def getProperty(method: MethodDeclaration) = {
-    val name = method.getName
-    BeanUtils.uncapitalize(name.asString.substring(if (name.asString.startsWith("is")) 2 else 3))
+  def getProperty(method: MethodDeclaration): String = {
+    val name = method.getNameAsString
+    BeanUtils.uncapitalize(name.substring(if (name.startsWith("is")) 2 else 3))
   }
 }

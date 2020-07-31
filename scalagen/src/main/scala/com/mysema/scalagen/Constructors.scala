@@ -15,21 +15,9 @@ package com.mysema.scalagen
 
 import UnitTransformer._
 import com.github.javaparser.ast.CompilationUnit
-import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration
-import com.github.javaparser.ast.body.BodyDeclaration
-import com.github.javaparser.ast.body.ConstructorDeclaration
-import com.github.javaparser.ast.stmt.ExplicitConstructorInvocationStmt
-import com.github.javaparser.ast.body.InitializerDeclaration
-import com.github.javaparser.ast.body.TypeDeclaration
-import com.github.javaparser.ast.body.FieldDeclaration
-import com.github.javaparser.ast.stmt.ExpressionStmt
-import com.github.javaparser.ast.expr.AssignExpr
-import com.github.javaparser.ast.expr.FieldAccessExpr
-import com.github.javaparser.ast.expr.NameExpr
-import com.github.javaparser.ast.body.VariableDeclarator
-import com.github.javaparser.ast.stmt.Statement
-import com.github.javaparser.ast.expr.ThisExpr
-import com.github.javaparser.ast.body.Parameter
+import com.github.javaparser.ast.body._
+import com.github.javaparser.ast.stmt._
+import com.github.javaparser.ast.expr._
 import com.github.javaparser.ast.NodeList
 
 object Constructors extends Constructors
@@ -46,7 +34,7 @@ class Constructors extends UnitTransformerBase {
   override def visit(n: ClassOrInterfaceDeclaration, cu: CompilationUnit):  ClassOrInterfaceDeclaration = {
     val t = super.visit(n, cu).asInstanceOf[ClassOrInterfaceDeclaration]
     // make members list mutable
-    t.setMembers(new NodeList[BodyDeclaration[_]](t.getMembers))
+    t.setMembers(NodeList.nodeList(t.getMembers))
 
     // get all constructors
     val constr = t.getMembers.collect { case c: ConstructorDeclaration => c }
@@ -85,10 +73,10 @@ class Constructors extends UnitTransformerBase {
       processStatements(cu, t, c)
 
       if (!c.getBody.isEmpty &&
-          !(c.getBody.size == 1 && c.getBody()(0).isInstanceOf[ExplicitConstructorInvocationStmt] &&
-          !c.getBody()(0).asInstanceOf[ExplicitConstructorInvocationStmt].isThis)) {
-        val initializer = new InitializerDeclaration(false, c.getBody)
-        t.getMembers.add(t.getMembers.indexOf(c), initializer)
+          !(c.getBody.size == 1 && c.getBody()(0).isExplicitConstructorInvocationStmt &&
+          !c.getBody()(0).asExplicitConstructorInvocationStmt().isThis)) {
+        val initializer: BodyDeclaration[_] = new InitializerDeclaration(false, c.getBody)
+        t.getMembers().add(t.getMembers.indexOf(c), initializer)
       }
 
     }
@@ -115,31 +103,31 @@ class Constructors extends UnitTransformerBase {
     c.getBody.getStatements.collect { case s: ExpressionStmt => s }
       .filter(isAssignment(_))
       .foreach { s =>
-      val assign = s.getExpression.asInstanceOf[AssignExpr]
-      if (assign.getTarget.isInstanceOf[FieldAccessExpr]) {
-        val fieldAccess = assign.getTarget.asInstanceOf[FieldAccessExpr]
-        processFieldAssign(s, assign, fieldAccess, c, variables, variableToField)
-      } else if (assign.getTarget.isInstanceOf[NameExpr]) {
-        val namedTarget = assign.getTarget.asInstanceOf[NameExpr]
-        if (variables.contains(namedTarget.getNameAsString)) {
-          if (assign.getValue.isInstanceOf[NameExpr]) { // field = parameter
-            val namedValue = assign.getValue.asInstanceOf[NameExpr]
-            c.getParameters.find(_.getName == namedValue.getName).foreach { param =>
-              val field = variableToField(namedTarget.getNameAsString)
-              // rename parameter to field name
-              param.setName(namedTarget.getName)
-              replacements = replacements.+((param.getNameAsString, namedTarget.getNameAsString))
-              copyAnnotationsAndModifiers(field, param)
-              // remove field
-              field.setVariables(field.getVariables.filterNot(_ == variables(namedTarget.getNameAsString)))
+        val assign = s.getExpression.asInstanceOf[AssignExpr]
+        if (assign.getTarget.isFieldAccessExpr) {
+          val fieldAccess = assign.getTarget.asFieldAccessExpr()
+          processFieldAssign(s, assign, fieldAccess, c, variables, variableToField)
+        } else if (assign.getTarget.isNameExpr) {
+          val namedTarget = assign.getTarget.asNameExpr()
+          if (variables.contains(namedTarget.getNameAsString)) {
+            if (assign.getValue.isNameExpr) { // field = parameter
+              val namedValue = assign.getValue.asNameExpr()
+              c.getParameters.find(_.getName == namedValue.getName).foreach { param =>
+                val field = variableToField(namedTarget.getNameAsString)
+                // rename parameter to field name
+                param.setName(namedTarget.getName)
+                replacements = replacements.+((param.getNameAsString, namedTarget.getNameAsString))
+                copyAnnotationsAndModifiers(field, param)
+                // remove field
+                field.setVariables(field.getVariables.filterNot(_ == variables(namedTarget.getNameAsString)))
+              }
+            } else { // field = ?!?
+              variables(namedTarget.getNameAsString).setInitializer(assign.getValue)
             }
-          } else { // field = ?!?
-            variables(namedTarget.getNameAsString).setInitializer(assign.getValue)
+            c.getBody.remove(s)
           }
-          c.getBody.remove(s)
         }
       }
-    }
 
     // remove empty field declarations
     fields.filter(_.getVariables.isEmpty).foreach { t.getMembers.remove(_) }
@@ -147,7 +135,7 @@ class Constructors extends UnitTransformerBase {
     // modify variables in other statements
     val renameTransformer = new RenameTransformer(replacements)
     c.getBody.setStatements(c.getBody.getStatements.map(stmt => {
-      if (!stmt.isInstanceOf[ExpressionStmt]) {
+      if (!stmt.isExpressionStmt) {
         stmt.accept(renameTransformer, cu).asInstanceOf[Statement]
       } else {
         stmt

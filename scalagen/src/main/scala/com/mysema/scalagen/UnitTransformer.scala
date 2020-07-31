@@ -14,21 +14,16 @@
 package com.mysema.scalagen 
 
 import com.github.javaparser.ast.expr._
-import com.github.javaparser.ast.CompilationUnit
-import com.github.javaparser.ast.stmt.BlockStmt
-import com.github.javaparser.ast.stmt.Statement
-import com.github.javaparser.ast.Node
-import com.github.javaparser.ast.NodeList
+import com.github.javaparser.ast._
+import com.github.javaparser.ast.body._
+import com.github.javaparser.ast.stmt._
 
 object UnitTransformer extends Helpers with Types {
   
-  @inline
-  implicit def toNameExpr(s: String) = new NameExpr(s)
+  @inline implicit def toNameExpr(s: String) = new NameExpr(s)
+  @inline implicit def toBlockStmt(s: Statement): BlockStmt = new BlockStmt(NodeList.nodeList(s))
   
-  @inline 
-  implicit def toBlock(s: Statement) = new BlockStmt(new NodeList(s))
-  
-  private def safeToString(obj: AnyRef): String = if (obj != null) obj.toString else null
+  //private def safeToString(obj: AnyRef): String = if (obj != null) obj.toString else null
             
   //val BOOLEAN_BEAN_PROPERTY_IMPORT = new Import("scala.reflect.BooleanBeanProperty", false, false)
   
@@ -40,10 +35,12 @@ object UnitTransformer extends Helpers with Types {
         
     override def visit(n: CompilationUnit, arg: CompilationUnit): Node = withCommentsFrom(n, arg) {
       val rv = new CompilationUnit()
+
       filter(n.getPackageDeclaration, arg).foreach{ rv.setPackageDeclaration }
-      rv.setImports(filter(n.getImports, arg))
+      rv.setImports(filter[ImportDeclaration](n.getImports, arg))
       // arg is replaced with converted instance here
-      rv.setTypes(filter(n.getTypes, rv)) 
+      val updatedTypes = filter[TypeDeclaration[_]](n.getTypes, rv)
+      rv.setTypes(updatedTypes)
       rv
     }
   }

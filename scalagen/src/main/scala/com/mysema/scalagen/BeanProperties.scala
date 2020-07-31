@@ -21,6 +21,7 @@ import com.github.javaparser.ast.body.MethodDeclaration
 import com.github.javaparser.ast.body.FieldDeclaration
 import com.github.javaparser.ast.ImportDeclaration
 import com.github.javaparser.ast.Modifier
+import scala.collection.immutable
 
 /**
  * BeanProperties turns field + accessor combinations into @BeanProperty annotated 
@@ -42,34 +43,43 @@ class BeanProperties(targetVersion: ScalaVersion) extends UnitTransformerBase wi
     
     // accessors
     val methods = t.getMembers.collect { case m: MethodDeclaration => m }
-    val getters = methods.filter(m => isBeanGetter(m) || isBooleanBeanGetter(m))
-      .map(m => (getProperty(m) ,m)).toMap      
-    val setters = methods.filter(m => isBeanSetter(m))
-      .map(m => (getProperty(m), m)).toMap
+
+    val getters: immutable.Map[String, MethodDeclaration] =
+      methods
+        .filter(m => isBeanGetter(m) || isBooleanBeanGetter(m))
+        .map(m => (getProperty(m), m))
+        .toMap
+
+    val setters: immutable.Map[String, MethodDeclaration] =
+      methods
+        .filter(m => isBeanSetter(m))
+        .map(m => (getProperty(m), m))
+        .toMap
    
     // fields with accessors
-    val fields = t.getMembers.collect { case f: FieldDeclaration => f }
-      .filter(_.isPrivate)
-      .flatMap( f => f.getVariables.map( v => (v.getNameAsString,v,f) ))
-      .filter { case (name,_,_) =>  getters.contains(name) }
+    val fields =
+      t.getMembers.collect { case f: FieldDeclaration => f }
+        .filter(_.isPrivate)
+        .flatMap( f => f.getVariables.map( v => (v.getNameAsString,v,f) ))
+        .filter { case (name,_,_) => getters.contains(name) }
           
     // remove accessors 
-    for ( (name, variable, field) <- fields) {
-      var getter = getters(name)
-      //t.getMembers.remove(getter)
-      t.setMembers(t.getMembers.filterNot(_ == getter))
-      setters.get(name).foreach { s => t.setMembers(t.getMembers.filterNot(_ == s)) }
-      
+    for ((name, variable, field) <- fields) {
+      val getter = getters(name)
+      val membersBefore = t.getMembers
+      t.setMembers(t.getMembers.filterNot{ _.equals(getter) })
+      val membersAfter = t.getMembers
+
+      setters.get(name).foreach { setter =>
+        t.setMembers(t.getMembers.filterNot{ _.equals(setter) })
+      }
+
       // make field public
-      val isFinal = field.isFinal
-      
-      //if (isFinal) field
-      // field.setModifiers(getter.getModifiers
-      //     .addModifier(if (isFinal) Modifier.Key.FINAL else 0))
-      
+      if (field.isFinal) field.addModifier(Modifier.Keyword.FINAL)
+
       val annotation = if (getter.getNameAsString.startsWith("is")) BOOLEAN_BEAN_PROPERTY else BEAN_PROPERTY 
 
-      if (field.getAnnotations == null || !field.getAnnotations.contains(annotation)) {
+      if (!field.getAnnotations.contains(annotation)) {
         field.setAnnotations(field.getAnnotations :+ annotation)
       }      
       

@@ -42,19 +42,15 @@ class Annotations(targetVersion: ScalaVersion) extends UnitTransformerBase {
     
   override def visit(n: AnnotationDeclaration, arg: CompilationUnit) = {
     // turns annotations into StaticAnnotation subclasses
-    arg.getImports().add(new ImportDeclaration(new Name("scala.annotation.StaticAnnotation"), false, false))
+    arg.getImports().add(new ImportDeclaration(new Name(new Name("scala.annotation"), "StaticAnnotation"), false, false))
     val clazz = new ClassOrInterfaceDeclaration()
     clazz.setName(n.getName)
-      val et = new NodeList[ClassOrInterfaceType]
-     et.add(staticAnnotationType)
-    clazz.setExtendedTypes(et)
+    clazz.setExtendedTypes(NodeList.nodeList(staticAnnotationType))
     clazz.setMembers(createMembers(n))
     clazz
   }
   
   private def createMembers(n: AnnotationDeclaration): NodeList[BodyDeclaration[_]] = {
-    import com.github.javaparser.ast.Modifier
-
     // TODO : default values
     val params = n.getMembers
       .collect { case m: AnnotationMemberDeclaration => m }
@@ -69,7 +65,7 @@ class Annotations(targetVersion: ScalaVersion) extends UnitTransformerBase {
       constructor.setBody(new BlockStmt())
       NodeList.nodeList(constructor)
     } else {
-      new NodeList[BodyDeclaration[_]]
+      NodeList.nodeList[BodyDeclaration[_]]()
     }
   }
     

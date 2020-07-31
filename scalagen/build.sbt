@@ -12,7 +12,7 @@ libraryDependencies ++= Seq(
   "org.scala-lang" % "scala-library" % scalaVersion.value % Test,
   "org.scala-lang" % "scala-compiler" % scalaVersion.value % Test,
 
-  "com.novocode" % "junit-interface" % "0.11" % Test,
+  "com.novocode" % "junit-interface" % "0.11" % Test exclude("junit", "junit-dep"),
 
   "junit" % "junit" % "4.13" % Test exclude("javax.servlet", "servlet-api"),
   "com.mysema.querydsl" % "querydsl-core" % querydslVersion % Test,

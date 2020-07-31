@@ -38,8 +38,7 @@ abstract class ModifierVisitor[A] extends GenericVisitor[Node, A] {
       while (it.hasNext) {
         val node = it.next()
         if (node != null) {
-          node.accept(this, arg)
-          rv.add(node)
+          rv.add(node.accept(this, arg).asInstanceOf[T])
         }
       }
       rv
@@ -418,7 +417,9 @@ abstract class ModifierVisitor[A] extends GenericVisitor[Node, A] {
   }
 
   override def visit(n: ReturnStmt, arg: A): Node = withCommentsFrom(n, arg) {
-    filter(n.getExpression, arg).getOrElse{ new ReturnStmt() }
+    n.getExpression.asScala.map{ expr =>
+      new ReturnStmt(filter(expr, arg))
+    }.getOrElse{ new ReturnStmt() }
   }
 
   override def visit(n: SingleMemberAnnotationExpr, arg: A): Node = withCommentsFrom(n, arg) {
